@@ -9,8 +9,11 @@ use super::{FilterError, FilterMatch, expand};
 /// 攻撃者が行を書けるので、バックトラックの上限を付ける。
 const BACKTRACK_LIMIT: usize = 100_000;
 
-/// 上流の `prefregex` のうち `__pref` の部分 (先頭の `error: ` など)。
-const PREFIX: &str = r"^(?:(?:error|fatal): (?:PAM: )?)?";
+/// 上流の `prefregex` のうち、journal で残る部分。
+/// `__prefix_line` の `__kernel_prefix` (`kernel: [ 970.69]:` など) と、
+/// `__pref` (先頭の `error: ` など)。common.conf は同梱していないので、
+/// 上流のテストデータ (3 つの書式) に合わせて写している。
+const PREFIX: &str = r"^(?:kernel:\s?\[\s*\d+\.\d+\]:?\s+)?(?:(?:error|fatal): (?:PAM: )?)?";
 
 const VARS: &[(&str, &str)] = &[
     ("__pref", r"(?:(?:error|fatal): (?:PAM: )?)?"),

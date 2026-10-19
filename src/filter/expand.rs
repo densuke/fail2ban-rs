@@ -20,7 +20,58 @@ pub fn expand(template: &str, vars: &[(&str, &str)]) -> String {
         }
         text = next;
     }
-    expand_builtins(&text)
+    resolve_conditions(&expand_builtins(&text))
+}
+
+/// `(?(name)yes|no)` を `(?(N)yes|no)` にする。
+///
+/// fancy-regex は名前の条件を「その文字列にマッチする先読み」と解釈し、
+/// 上流 (Python の re) の「名前の群が当たっているか」にならないので、群の番号に直す。
+fn resolve_conditions(pattern: &str) -> String {
+    group_names(pattern)
+        .into_iter()
+        .fold(pattern.to_string(), |acc, (name, index)| {
+            acc.replace(&format!("(?({name})"), &format!("(?({index})"))
+        })
+}
+
+/// 名前つき群の (名前, 番号) を開き括弧の順に集める。
+fn group_names(pattern: &str) -> Vec<(String, usize)> {
+    let chars: Vec<char> = pattern.chars().collect();
+    let (mut names, mut count, mut i, mut in_class) = (Vec::new(), 0, 0, false);
+    while i < chars.len() {
+        match chars[i] {
+            '\\' => i += 1,
+            '[' if !in_class => in_class = true,
+            ']' if in_class => in_class = false,
+            '(' if !in_class => {
+                if chars.get(i + 1) == Some(&'?') && chars.get(i + 2) == Some(&'(') {
+                    // 条件式 `(?(cond)` の内側の括弧は群ではない
+                    i += 2;
+                } else if chars.get(i + 1) != Some(&'?') {
+                    count += 1;
+                } else if let Some(name) = named_group(&chars[i..]) {
+                    count += 1;
+                    names.push((name, count));
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    names
+}
+
+/// `(?P<name>` / `(?<name>` なら name を返す (先読み・後読みは None)。
+fn named_group(chars: &[char]) -> Option<String> {
+    let head: String = chars.iter().take(64).collect();
+    let rest = head
+        .strip_prefix("(?P<")
+        .or_else(|| head.strip_prefix("(?<"))?;
+    if rest.starts_with('=') || rest.starts_with('!') {
+        return None;
+    }
+    rest.find('>').map(|end| rest[..end].to_string())
 }
 
 fn expand_builtins(text: &str) -> String {
