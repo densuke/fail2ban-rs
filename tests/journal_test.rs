@@ -109,3 +109,18 @@ exit 0
     let second = rx.recv_timeout(Duration::from_secs(15)).unwrap();
     assert!(second.message.contains("--after-cursor=c1"), "{second:?}");
 }
+
+#[test]
+fn 最初の起動に失敗したらチャネルを閉じる() {
+    let (tx, rx) = mpsc::channel();
+    let _h = spawn_reader(
+        "/nonexistent/journalctl".into(),
+        matches(),
+        Duration::from_secs(600),
+        tx,
+    );
+    assert_eq!(
+        rx.recv_timeout(Duration::from_secs(5)),
+        Err(mpsc::RecvTimeoutError::Disconnected)
+    );
+}

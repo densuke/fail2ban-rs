@@ -79,6 +79,7 @@ pub fn spawn_reader(
 ) -> JoinHandle<()> {
     thread::spawn(move || {
         let mut cursor: Option<String> = None;
+        let mut first = true;
         loop {
             let args = journalctl_args(&matches, findtime, cursor.as_deref());
             match Command::new(&journalctl)
@@ -88,8 +89,15 @@ pub fn spawn_reader(
                 .stderr(Stdio::inherit())
                 .spawn()
             {
-                Err(e) => eprintln!("journalctl ({}) を起動できない: {e}", journalctl.display()),
+                Err(e) => {
+                    eprintln!("journalctl ({}) を起動できない: {e}", journalctl.display());
+                    // 最初の起動に失敗したら設定の誤りなので、tx を落として呼び出し側に知らせる。
+                    if first {
+                        return;
+                    }
+                }
                 Ok(mut child) => {
+                    first = false;
                     let Some(stdout) = child.stdout.take() else {
                         eprintln!("journalctl の標準出力を取れない");
                         let _ = child.kill();
@@ -97,8 +105,10 @@ pub fn spawn_reader(
                         thread::sleep(RESTART_DELAY);
                         continue;
                     };
-                    if !forward_lines(BufReader::new(stdout), &tx, &mut cursor) {
-                        let _ = child.kill();
+                    let receiver_alive = forward_lines(BufReader::new(stdout), &tx, &mut cursor);
+                    // 読み取りエラーで抜けた場合も、子が生きたままだと wait が戻らない。
+                    let _ = child.kill();
+                    if !receiver_alive {
                         let _ = child.wait();
                         return;
                     }
