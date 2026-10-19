@@ -20,15 +20,17 @@ fn render_replaces_every_placeholder() {
         "/bin/x",
         "--t",
         "ban {ip} for {bantime}s",
+        "[{kind}]",
         "{ip}{ip}",
         "{other}",
     ]);
     assert_eq!(
-        render_command(&template, ip, Duration::from_secs(300)),
+        render_command(&template, ip, Duration::from_secs(300), "長期"),
         strings(&[
             "/bin/x",
             "--t",
             "ban 192.0.2.5 for 300s",
+            "[長期]",
             "192.0.2.5192.0.2.5",
             "{other}",
         ])
@@ -42,11 +44,11 @@ fn render_uses_canonical_ip() {
     let template = strings(&["{ip}"]);
     let secs = Duration::from_secs(1);
     assert_eq!(
-        render_command(&template, mapped, secs),
+        render_command(&template, mapped, secs, "通常"),
         strings(&["192.0.2.6"])
     );
     assert_eq!(
-        render_command(&template, v6, secs),
+        render_command(&template, v6, secs, "通常"),
         strings(&["2001:db8::1"])
     );
 }

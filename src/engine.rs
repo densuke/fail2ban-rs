@@ -4,7 +4,7 @@ use std::net::IpAddr;
 use std::time::{Duration, SystemTime};
 
 use crate::action::{ActionError, BanAction};
-use crate::config::{Config, ConfigError};
+use crate::config::{Config, ConfigError, RecidiveConfig};
 use crate::filter::{FilterError, SshdFilter};
 use crate::ip::{IgnoreList, canonical_ip};
 use crate::journal::LogEntry;
@@ -23,6 +23,8 @@ pub enum Outcome {
     Counted(IpAddr),
     /// 上限に達してブロックした。
     Banned(IpAddr),
+    /// 常習犯なので、長い期間でブロックした。
+    LongBanned(IpAddr),
 }
 
 /// Engine を作るときのエラー。
@@ -40,6 +42,8 @@ pub struct Engine<A: BanAction> {
     ignore: IgnoreList,
     tracker: FailTracker,
     bantime: Duration,
+    /// 常習犯の設定と、ブロックの回数を数える tracker。無効なら `None`。
+    recidive: Option<(RecidiveConfig, FailTracker)>,
     action: A,
 }
 
@@ -50,6 +54,11 @@ impl<A: BanAction> Engine<A> {
             ignore: IgnoreList::parse(&config.ignoreip)?,
             tracker: FailTracker::new(config.sshd.findtime, config.sshd.maxretry),
             bantime: config.sshd.bantime,
+            recidive: config
+                .sshd
+                .recidive
+                .clone()
+                .map(|r| (r.clone(), FailTracker::new(r.findtime, r.maxbans))),
             action,
         })
     }
@@ -73,15 +82,34 @@ impl<A: BanAction> Engine<A> {
         if self.ignore.contains(ip) {
             return Ok(Outcome::Ignored(ip));
         }
-        if self.tracker.record(ip, entry.time) {
-            self.action.ban(ip, self.bantime)?;
-            return Ok(Outcome::Banned(ip));
+        if !self.tracker.record(ip, entry.time) {
+            return Ok(Outcome::Counted(ip));
         }
-        Ok(Outcome::Counted(ip))
+        // maxbans 回目のブロックなら長期ブロックにする (記録は tracker 側で消える)。
+        if let Some((recidive, bans)) = self.recidive.as_mut()
+            && bans.record(ip, entry.time)
+        {
+            self.action.ban(ip, recidive.bantime)?;
+            return Ok(Outcome::LongBanned(ip));
+        }
+        self.action.ban(ip, self.bantime)?;
+        Ok(Outcome::Banned(ip))
+    }
+
+    /// ブロックの結果に対応するブロック期間。ブロックではない結果なら `None`。
+    pub fn bantime_of(&self, outcome: &Outcome) -> Option<Duration> {
+        match (outcome, &self.recidive) {
+            (Outcome::Banned(_), _) => Some(self.bantime),
+            (Outcome::LongBanned(_), Some((recidive, _))) => Some(recidive.bantime),
+            _ => None,
+        }
     }
 
     /// 古い記録を捨てる。
     pub fn prune(&mut self, now: SystemTime) {
         self.tracker.prune(now);
+        if let Some((_, bans)) = self.recidive.as_mut() {
+            bans.prune(now);
+        }
     }
 }

@@ -1,7 +1,9 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use fail2ban_rs::config::{Config, JailConfig, Mode, NftConfig, NotifyConfig, parse_config};
+use fail2ban_rs::config::{
+    Config, JailConfig, Mode, NftConfig, NotifyConfig, RecidiveConfig, parse_config,
+};
 use fail2ban_rs::duration::parse_duration;
 
 fn default_config() -> Config {
@@ -20,6 +22,7 @@ fn default_config() -> Config {
                 "_COMM=sshd-session".to_string(),
                 "_UID=0".to_string(),
             ],
+            recidive: None,
         },
         nft: NftConfig {
             table: "fail2ban_rs".to_string(),
@@ -181,4 +184,57 @@ fn notify_on_ban_requires_absolute_program_path() {
 #[test]
 fn notify_rejects_unknown_key() {
     assert!(parse_config("[notify]\nfoo = 1").is_err());
+}
+
+#[test]
+fn recidive_is_off_when_section_is_absent() {
+    assert_eq!(parse_config("").unwrap().sshd.recidive, None);
+}
+
+#[test]
+fn empty_recidive_section_enables_defaults() {
+    let config = parse_config("[sshd.recidive]").unwrap();
+    assert_eq!(
+        config.sshd.recidive,
+        Some(RecidiveConfig {
+            maxbans: 3,
+            findtime: Duration::from_secs(86400),
+            bantime: Duration::from_secs(86400),
+        })
+    );
+}
+
+#[test]
+fn recidive_values_are_overridable() {
+    let text = "[sshd.recidive]\nmaxbans = 2\nfindtime = \"2d\"\nbantime = \"7d\"";
+    assert_eq!(
+        parse_config(text).unwrap().sshd.recidive,
+        Some(RecidiveConfig {
+            maxbans: 2,
+            findtime: Duration::from_secs(2 * 86400),
+            bantime: Duration::from_secs(7 * 86400),
+        })
+    );
+}
+
+#[test]
+fn recidive_invalid_values_are_rejected() {
+    for text in [
+        "[sshd.recidive]\nmaxbans = 1",
+        "[sshd.recidive]\nmaxbans = 0",
+        "[sshd.recidive]\nbantime = \"5m\"",
+        "[sshd.recidive]\nbantime = \"10m\"",
+        "[sshd.recidive]\nunknown = 1",
+        "[sshd.recidive]\nbantime = \"366d\"",
+        "[sshd.recidive]\nfindtime = \"366d\"",
+        "[sshd.recidive]\nfindtime = \"abc\"",
+    ] {
+        assert!(parse_config(text).is_err(), "{text}");
+    }
+}
+
+#[test]
+fn recidive_bantime_must_exceed_a_custom_sshd_bantime() {
+    let text = "[sshd]\nbantime = \"2d\"\n[sshd.recidive]";
+    assert!(parse_config(text).is_err());
 }

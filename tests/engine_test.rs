@@ -161,3 +161,114 @@ fn nofail_line_is_no_match() {
     let msg = "Failed publickey for alice from 192.0.2.30 port 1 ssh2";
     assert_eq!(e.handle(&entry(msg, 0)).unwrap(), Outcome::NoMatch);
 }
+
+const RECIDIVE_CONFIG: &str = "[sshd]\nmaxretry = 3\nbantime = \"300s\"\n[sshd.recidive]";
+const IP: &str = "192.0.2.50";
+const MIN: u64 = 60;
+const HOUR: u64 = 3600;
+
+/// start 秒から 3 回失敗させ、最後の結果を返す。
+fn burst(e: &mut Engine<Recorder>, host: &str, start: u64) -> Outcome {
+    let msg = failed(host);
+    let mut last = Outcome::NoMatch;
+    for i in 0..3 {
+        last = e.handle(&entry(&msg, start + i)).unwrap();
+    }
+    last
+}
+
+fn secs(items: &[u64]) -> Vec<Duration> {
+    items.iter().map(|s| Duration::from_secs(*s)).collect()
+}
+
+fn ban_times(bans: &Bans) -> Vec<Duration> {
+    bans.borrow().iter().map(|(_, t)| *t).collect()
+}
+
+#[test]
+fn third_ban_within_findtime_is_long() {
+    let (mut e, bans) = engine(&parse_config(RECIDIVE_CONFIG).unwrap());
+    let ip: IpAddr = IP.parse().unwrap();
+    assert_eq!(burst(&mut e, IP, 0), Outcome::Banned(ip));
+    assert_eq!(burst(&mut e, IP, 20 * MIN), Outcome::Banned(ip));
+    assert_eq!(burst(&mut e, IP, 40 * MIN), Outcome::LongBanned(ip));
+    assert_eq!(ban_times(&bans), secs(&[300, 300, 86400]));
+}
+
+#[test]
+fn count_restarts_after_a_long_ban() {
+    let (mut e, bans) = engine(&parse_config(RECIDIVE_CONFIG).unwrap());
+    let ip: IpAddr = IP.parse().unwrap();
+    for i in 0..3 {
+        burst(&mut e, IP, i * 20 * MIN);
+    }
+    assert_eq!(burst(&mut e, IP, 3 * HOUR), Outcome::Banned(ip));
+    assert_eq!(ban_times(&bans), secs(&[300, 300, 86400, 300]));
+}
+
+#[test]
+fn bans_spread_beyond_findtime_stay_short() {
+    let (mut e, bans) = engine(&parse_config(RECIDIVE_CONFIG).unwrap());
+    let ip: IpAddr = IP.parse().unwrap();
+    assert_eq!(burst(&mut e, IP, 0), Outcome::Banned(ip));
+    assert_eq!(burst(&mut e, IP, 20 * MIN), Outcome::Banned(ip));
+    // 1 つめのブロックから 1 日より後。
+    assert_eq!(burst(&mut e, IP, 24 * HOUR + 30 * MIN), Outcome::Banned(ip));
+    assert_eq!(ban_times(&bans), secs(&[300, 300, 300]));
+}
+
+#[test]
+fn without_recidive_every_ban_is_short() {
+    let config = parse_config("[sshd]\nmaxretry = 3\nbantime = \"300s\"").unwrap();
+    let (mut e, bans) = engine(&config);
+    let ip: IpAddr = IP.parse().unwrap();
+    for i in 0..5 {
+        assert_eq!(burst(&mut e, IP, i * 20 * MIN), Outcome::Banned(ip));
+    }
+    assert_eq!(ban_times(&bans), secs(&[300; 5]));
+}
+
+#[test]
+fn recidive_counts_each_ip_separately() {
+    let (mut e, _) = engine(&parse_config(RECIDIVE_CONFIG).unwrap());
+    let a: IpAddr = IP.parse().unwrap();
+    let b: IpAddr = "192.0.2.51".parse().unwrap();
+    burst(&mut e, IP, 0);
+    burst(&mut e, "192.0.2.51", 10 * MIN);
+    burst(&mut e, IP, 20 * MIN);
+    assert_eq!(burst(&mut e, "192.0.2.51", 30 * MIN), Outcome::Banned(b));
+    assert_eq!(burst(&mut e, IP, 40 * MIN), Outcome::LongBanned(a));
+}
+
+#[test]
+fn ignored_ip_never_gets_a_long_ban() {
+    let (mut e, bans) = engine(&parse_config(RECIDIVE_CONFIG).unwrap());
+    let ip: IpAddr = "127.0.0.1".parse().unwrap();
+    for i in 0..5 {
+        let o = burst(&mut e, "127.0.0.1", i * 20 * MIN);
+        assert_eq!(o, Outcome::Ignored(ip));
+    }
+    assert!(bans.borrow().is_empty());
+}
+
+#[test]
+fn bantime_of_matches_the_outcome() {
+    let (e, _) = engine(&parse_config(RECIDIVE_CONFIG).unwrap());
+    let ip: IpAddr = IP.parse().unwrap();
+    let short = Some(Duration::from_secs(300));
+    let long = Some(Duration::from_secs(86400));
+    assert_eq!(e.bantime_of(&Outcome::Banned(ip)), short);
+    assert_eq!(e.bantime_of(&Outcome::LongBanned(ip)), long);
+    assert_eq!(e.bantime_of(&Outcome::Counted(ip)), None);
+}
+
+#[test]
+fn prune_forgets_old_bans() {
+    let (mut e, bans) = engine(&parse_config(RECIDIVE_CONFIG).unwrap());
+    let ip: IpAddr = IP.parse().unwrap();
+    burst(&mut e, IP, 0);
+    burst(&mut e, IP, 20 * MIN);
+    e.prune(SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000 + 3 * 86400));
+    assert_eq!(burst(&mut e, IP, 40 * MIN), Outcome::Banned(ip));
+    assert_eq!(ban_times(&bans), secs(&[300, 300, 300]));
+}

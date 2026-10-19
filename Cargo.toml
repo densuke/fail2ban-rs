@@ -1,6 +1,6 @@
 [package]
 name = "fail2ban-rs"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 license = "GPL-2.0-or-later"
 description = "sshd の認証失敗を journal から読み、nftables で一時的にブロックする単一バイナリ (fail2ban の移植)"
