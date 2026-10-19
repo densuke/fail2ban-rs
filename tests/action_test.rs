@@ -74,3 +74,35 @@ fn start_error_includes_nft_stderr() {
     let err = action.start().unwrap_err();
     assert!(err.to_string().contains("syntax error"), "{err}");
 }
+
+#[test]
+fn ban_script_rounds_subsecond_up_to_one_second() {
+    let ip: IpAddr = "192.0.2.10".parse().unwrap();
+    for d in [Duration::from_millis(500), Duration::ZERO] {
+        assert_eq!(
+            nft_ban_script("fail2ban_rs", ip, d),
+            "add element inet fail2ban_rs addr4 { 192.0.2.10 timeout 1s }
+"
+        );
+    }
+}
+
+#[test]
+fn ban_script_rounds_fraction_up() {
+    let ip: IpAddr = "192.0.2.10".parse().unwrap();
+    assert_eq!(
+        nft_ban_script("fail2ban_rs", ip, Duration::from_millis(1500)),
+        "add element inet fail2ban_rs addr4 { 192.0.2.10 timeout 2s }
+"
+    );
+}
+
+#[test]
+fn ban_script_maps_v4_mapped_to_addr4() {
+    let ip: IpAddr = "::ffff:192.0.2.1".parse().unwrap();
+    assert_eq!(
+        nft_ban_script("fail2ban_rs", ip, Duration::from_secs(600)),
+        "add element inet fail2ban_rs addr4 { 192.0.2.1 timeout 600s }
+"
+    );
+}

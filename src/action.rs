@@ -16,6 +16,12 @@ pub enum ActionError {
         #[source]
         source: std::io::Error,
     },
+    #[error("nft の終了を待てません ({path}): {source}")]
+    Wait {
+        path: String,
+        #[source]
+        source: std::io::Error,
+    },
     #[error("nft が失敗しました ({status}): {stderr}")]
     NftFailed { status: String, stderr: String },
 }
@@ -67,6 +73,10 @@ impl NftAction {
             path: path.display().to_string(),
             source,
         };
+        let wait_err = |source| ActionError::Wait {
+            path: path.display().to_string(),
+            source,
+        };
         let mut child = Command::new(path)
             .args(["-f", "-"])
             .stdin(Stdio::piped())
@@ -78,7 +88,7 @@ impl NftAction {
             // nft が先に終わると書き込みが失敗するが、原因は終了状態と stderr で分かる
             let _ = stdin.write_all(script.as_bytes());
         }
-        let output = child.wait_with_output().map_err(spawn_err)?;
+        let output = child.wait_with_output().map_err(wait_err)?;
         if output.status.success() {
             Ok(())
         } else {
@@ -105,12 +115,20 @@ pub fn nft_setup_script(table: &str, priority: i32) -> String {
 
 /// 1 つの IP を `bantime` 秒の期限付きで set に加えるスクリプト。
 pub fn nft_ban_script(table: &str, ip: IpAddr, bantime: Duration) -> String {
+    // IPv4 射影アドレスは IPv4 として扱う
+    let ip = ip.to_canonical();
     let set = match ip {
         IpAddr::V4(_) => "addr4",
         IpAddr::V6(_) => "addr6",
     };
     format!(
         "add element inet {table} {set} {{ {ip} timeout {}s }}\n",
-        bantime.as_secs()
+        timeout_secs(bantime)
     )
+}
+
+/// 秒に切り上げる。0 秒は nft で無期限になりうるので、最低 1 秒にする。
+fn timeout_secs(bantime: Duration) -> u64 {
+    let secs = bantime.as_secs() + u64::from(bantime.subsec_nanos() > 0);
+    secs.max(1)
 }
