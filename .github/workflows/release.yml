@@ -1,0 +1,114 @@
+name: release
+
+# タグ push で各プラットフォームのバイナリをビルド・テストし、GitHub Release に添付する。
+#   git tag v0.1.0 && git push origin v0.1.0
+#
+# ジョブ構成: guard（検証） → build（matrix・各プラットフォームを並行ビルド） → publish（Release を 1 回だけ作成）
+#
+# 生成物:
+#   - fail2ban-rs-x86_64-linux-musl  … x86_64 Linux 用・静的バイナリ
+#   - fail2ban-rs-aarch64-linux-musl … aarch64 Linux (Raspberry Pi など) 用・静的バイナリ
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: タグ名と Cargo.toml の version が一致することを検証
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          VERSION="$(grep -m1 '^version = ' Cargo.toml | sed -E 's/version = "([^"]+)"/\1/')"
+          if [ "${TAG}" != "v${VERSION}" ]; then
+            echo "::error::タグ名(${TAG})と Cargo.toml の version(v${VERSION})が一致しません。" >&2
+            exit 1
+          fi
+          echo "OK: ${TAG} == v${VERSION}"
+
+      - name: 同名リリースが既に存在しないことを検証
+        # 既存タグへの再アップロードは事故のもとなので、既にあれば fail する (--clobber で上書きしない)。
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            echo "::error::リリース ${TAG} は既に存在します。既存タグへの上書きは行いません（version を上げて新タグを切ってください）。" >&2
+            exit 1
+          fi
+          echo "OK: ${TAG} は未作成"
+
+  build:
+    needs: guard
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            asset: fail2ban-rs-x86_64-linux-musl
+          # Arm ランナーでネイティブにビルド・テストする
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+            asset: fail2ban-rs-aarch64-linux-musl
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust target
+        run: |
+          rustup update stable
+          rustup target add ${{ matrix.target }}
+
+      - name: Install musl tools
+        # rustls(ring) などの C/asm のビルドに musl-gcc が要る
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Test
+        # nft を実際に動かすテストは #[ignore] なので、ここでは走らない
+        run: cargo test --release --target ${{ matrix.target }}
+
+      - name: Stage artifact
+        run: |
+          mkdir -p dist
+          cp "target/${{ matrix.target }}/release/fail2ban-rs" \
+             "dist/${{ matrix.asset }}"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: dist/${{ matrix.asset }}
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Create GitHub Release and upload artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "${TAG}" --repo "${GITHUB_REPOSITORY}" \
+            --title "${TAG}" \
+            --notes "x86_64 / aarch64 (musl の静的バイナリ)。配置の手順は README を参照。" \
+            dist/*

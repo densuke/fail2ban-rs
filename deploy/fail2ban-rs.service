@@ -1,0 +1,23 @@
+# fail2ban-rs の systemd ユニット。
+# /usr/local/bin/fail2ban-rs に置いたバイナリを、/etc/fail2ban-rs/config.toml で起動する。
+# nft と journal の読み取りのため root で動かす。
+#
+# 導入:
+#   sudo install -m 0755 fail2ban-rs /usr/local/bin/fail2ban-rs
+#   sudo install -D -m 0644 config.example.toml /etc/fail2ban-rs/config.toml
+#   sudo cp fail2ban-rs.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now fail2ban-rs
+
+[Unit]
+Description=fail2ban-rs (sshd の認証失敗を nftables でブロックする)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/fail2ban-rs run --config /etc/fail2ban-rs/config.toml
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
