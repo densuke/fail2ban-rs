@@ -111,6 +111,19 @@ fn run(path: &Path) -> Result<(), String> {
     }
 }
 
+/// 起動時の 1 行に出す recidive の設定。無効なら `off`。
+fn recidive_summary(config: &Config) -> String {
+    match &config.sshd.recidive {
+        None => "off".to_string(),
+        Some(r) => format!(
+            "{}/{}s/{}s",
+            r.maxbans,
+            r.findtime.as_secs(),
+            r.bantime.as_secs()
+        ),
+    }
+}
+
 fn run_with<A: BanAction>(config: &Config, action: A) -> Result<(), String> {
     // 設定の検証を先に済ませ、通ってから nft などを触る。
     if config.ignoreip.is_empty() {
@@ -119,11 +132,12 @@ fn run_with<A: BanAction>(config: &Config, action: A) -> Result<(), String> {
     let mut engine = Engine::new(config, action).map_err(|e| e.to_string())?;
     engine.start().map_err(|e| e.to_string())?;
     println!(
-        "start mode={:?} maxretry={} findtime={}s bantime={}s ignoreip={:?}",
+        "start mode={:?} maxretry={} findtime={}s bantime={}s recidive={} ignoreip={:?}",
         config.mode,
         config.sshd.maxretry,
         config.sshd.findtime.as_secs(),
         config.sshd.bantime.as_secs(),
+        recidive_summary(config),
         config.ignoreip
     );
     let (tx, rx) = mpsc::channel();
@@ -139,15 +153,18 @@ fn run_with<A: BanAction>(config: &Config, action: A) -> Result<(), String> {
         match rx.recv_timeout(RECV_TIMEOUT) {
             Ok(entry) => {
                 match engine.handle(&entry) {
-                    // log モードでは LogAction が `would ban` を出すので、二重に出さない。
-                    Ok(Outcome::Banned(ip)) => {
+                    Ok(outcome @ (Outcome::Banned(ip) | Outcome::LongBanned(ip))) => {
+                        let long = matches!(outcome, Outcome::LongBanned(_));
+                        let bantime = engine.bantime_of(&outcome).unwrap_or(config.sshd.bantime);
+                        // log モードでは LogAction が `would ban` を出すので、二重に出さない。
                         if config.mode == Mode::Nft {
-                            println!("ban {ip} for {}s", config.sshd.bantime.as_secs());
+                            let note = if long { " (recidive)" } else { "" };
+                            println!("ban {ip} for {}s{note}", bantime.as_secs());
                         }
                         // 通知は mode に関係なく行う (log モードでも動作を確かめられる)。
                         if !config.notify.on_ban.is_empty() {
-                            let argv =
-                                render_command(&config.notify.on_ban, ip, config.sshd.bantime);
+                            let kind = if long { "長期" } else { "通常" };
+                            let argv = render_command(&config.notify.on_ban, ip, bantime, kind);
                             spawn_notify(&argv);
                         }
                     }

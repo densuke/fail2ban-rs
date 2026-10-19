@@ -68,11 +68,24 @@ sudo systemctl restart fail2ban-rs
 
 読む journal の行は、既定で `_UID=0` (root) が書いた sshd / sshd-session のものに限ります。`_COMM` は一般ユーザーでも偽装できるため、偽の失敗行で他人の IP をブロックさせないための条件です。`bantime` と `findtime` は 365 日までです。
 
+## 常習犯を長くブロックする: `[sshd.recidive]`
+
+同じ IP が `findtime` の間に `maxbans` 回ブロックされたら、その回は長い `bantime` でブロックします。fail2ban の recidive と同じ考え方です。長期ブロックのあとは数え直しになります。`[sshd.recidive]` を書くと有効になり、書かなければ無効です (中身は省略できます)。
+
+```toml
+[sshd.recidive]
+maxbans = 3       # 既定は 3。2 以上
+findtime = "1d"   # 既定は "1d"
+bantime = "1d"    # 既定は "1d"。sshd.bantime より長くする。365 日まで
+```
+
+`nft` の mode では、長期ブロックのログは `ban <ip> for <secs>s (recidive)` と出ます。起動時の行には `recidive=3/86400s/86400s` (maxbans/findtime/bantime。無効なら `recidive=off`) が出ます。
+
 ## ブロックしたときに通知する
 
 `[notify]` の `on_ban` にコマンドを配列で書くと、ブロックのたびに実行する。
 シェルを通さず、引数をそのまま渡す。先頭の要素は絶対パスにする。
-各要素の `{ip}` はブロックした IP、`{bantime}` は bantime の秒数に置き換わる。
+各要素の `{ip}` はブロックした IP、`{bantime}` は実際に使った bantime の秒数、`{kind}` はブロックの種類 (通常は `通常`、常習犯の長期ブロックは `長期`) に置き換わる。
 `mode = "log"` でも実行するので、通知の動作確認に使える。
 通知コマンドが失敗しても、ブロックは妨げない (stderr に 1 行出るだけ)。
 
@@ -121,7 +134,7 @@ sudo nft delete table inet fail2ban_rs
 - sqlite による永続化。ブロックは nft の set に入るので、デーモンの再起動では残りますが、OS の再起動では消えます。
 - MLF (複数行の関連付け)、ddos モード、aggressive モード。
 - クライアントとサーバーのソケット通信、DNS 名の解決、ファイルの tail。
-- pam の複数ユーザーの計数、bantime の段階的な延長。
+- pam の複数ユーザーの計数、bantime の段階的な延長 (常習犯の 1 段階だけの長期ブロックは `[sshd.recidive]` にあります)。
 - sshd 以外のジェイル。
 - ポート単位のブロック。ブロックした IP からの通信はすべて落とします。
 

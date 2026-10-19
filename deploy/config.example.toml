@@ -33,6 +33,15 @@ bantime = "10m"
 # _COMM は一般ユーザーでも偽装できるため、root 発 (_UID=0) の行だけを読む。
 journalmatch = ["_COMM=sshd", "_UID=0", "+", "_COMM=sshd-session", "_UID=0"]
 
+# 常習犯を長くブロックする (fail2ban の recidive と同じ考え方)。
+# このセクションを書くと有効になり、書かなければ無効 (既定)。中身は省略できる。
+# 同じ IP が findtime の間に maxbans 回ブロックされたら、その回は bantime で長くブロックする。
+# 長期ブロックのあとは数え直しになる。bantime は sshd.bantime より長くすること。
+# [sshd.recidive]
+# maxbans = 3        # 既定は 3。2 以上
+# findtime = "1d"    # 既定は "1d"
+# bantime = "1d"     # 既定は "1d"
+
 [nft]
 # 自前で作る nftables の表の名前。inet ファミリーの表として作る。既定は "fail2ban_rs"。
 # 既存の表 (例: iptables-nft の table ip filter) とは別の名前にすること。
@@ -50,7 +59,8 @@ journalctl_path = "/usr/bin/journalctl"
 [notify]
 # ブロックのたびに実行するコマンド。空 (既定) なら通知しない。mode が log でも実行する。
 # シェルを通さず、引数の配列としてそのまま実行する。先頭の要素は絶対パスにすること。
-# 各要素の中の {ip} はブロックした IP、{bantime} は bantime の秒数 (整数) に置き換える。
+# 各要素の中の {ip} はブロックした IP、{bantime} は実際に使った bantime の秒数 (整数)、
+# {kind} はブロックの種類 (通常のブロックは "通常"、recidive による長期ブロックは "長期") に置き換える。
 # fail2ban-rs は root で動くので、ユーザーのバイナリは runuser 経由で呼ぶ。
 # on_ban = [
 #   "/usr/sbin/runuser", "-u", "densuke", "--", "/home/densuke/.local/bin/discord-send-notifier",

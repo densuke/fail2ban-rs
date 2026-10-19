@@ -13,6 +13,9 @@ use crate::duration::parse_duration;
 const DEFAULT_MAXRETRY: u32 = 5;
 const DEFAULT_FINDTIME: Duration = Duration::from_secs(600);
 const DEFAULT_BANTIME: Duration = Duration::from_secs(600);
+const DEFAULT_RECIDIVE_MAXBANS: u32 = 3;
+const DEFAULT_RECIDIVE_FINDTIME: Duration = Duration::from_secs(24 * 3600);
+const DEFAULT_RECIDIVE_BANTIME: Duration = Duration::from_secs(24 * 3600);
 const DEFAULT_TABLE: &str = "fail2ban_rs";
 const DEFAULT_PRIORITY: i32 = -10;
 const DEFAULT_NFT_PATH: &str = "/usr/sbin/nft";
@@ -55,6 +58,16 @@ pub struct JailConfig {
     pub findtime: Duration,
     pub bantime: Duration,
     pub journalmatch: Vec<String>,
+    /// 常習犯を長くブロックする設定。`None` なら無効。
+    pub recidive: Option<RecidiveConfig>,
+}
+
+/// 常習犯 (findtime の間に maxbans 回ブロックされた IP) の長期ブロックの設定。
+#[derive(Debug, Clone, PartialEq)]
+pub struct RecidiveConfig {
+    pub maxbans: u32,
+    pub findtime: Duration,
+    pub bantime: Duration,
 }
 
 /// nftables 関連の設定。
@@ -101,6 +114,15 @@ struct RawJail {
     findtime: Option<RawDuration>,
     bantime: Option<RawDuration>,
     journalmatch: Option<Vec<String>>,
+    recidive: Option<RawRecidive>,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+struct RawRecidive {
+    maxbans: Option<u32>,
+    findtime: Option<RawDuration>,
+    bantime: Option<RawDuration>,
 }
 
 #[derive(Deserialize, Default)]
@@ -168,12 +190,50 @@ fn jail_from_raw(raw: RawJail) -> Result<JailConfig, ConfigError> {
     }
     let journalmatch = raw.journalmatch.unwrap_or_else(default_journalmatch);
     validate_journalmatch(&journalmatch)?;
+    let bantime = duration_or("sshd.bantime", raw.bantime, DEFAULT_BANTIME)?;
+    let recidive = raw
+        .recidive
+        .map(|r| recidive_from_raw(r, bantime))
+        .transpose()?;
     Ok(JailConfig {
         enabled: raw.enabled.unwrap_or(true),
         maxretry,
         findtime: duration_or("sshd.findtime", raw.findtime, DEFAULT_FINDTIME)?,
-        bantime: duration_or("sshd.bantime", raw.bantime, DEFAULT_BANTIME)?,
+        bantime,
         journalmatch,
+        recidive,
+    })
+}
+
+/// 長期ブロックは通常より長くなければ意味がないので、`bantime` 以下は拒否する。
+fn recidive_from_raw(raw: RawRecidive, bantime: Duration) -> Result<RecidiveConfig, ConfigError> {
+    let maxbans = raw.maxbans.unwrap_or(DEFAULT_RECIDIVE_MAXBANS);
+    if maxbans < 2 {
+        return Err(ConfigError::InvalidValue {
+            key: "sshd.recidive.maxbans",
+            value: maxbans.to_string(),
+        });
+    }
+    let long = duration_or(
+        "sshd.recidive.bantime",
+        raw.bantime,
+        DEFAULT_RECIDIVE_BANTIME,
+    )?;
+    if long <= bantime {
+        return Err(ConfigError::InvalidValue {
+            key: "sshd.recidive.bantime",
+            value: format!("{}s (sshd.bantime より長くする)", long.as_secs()),
+        });
+    }
+    let findtime = duration_or(
+        "sshd.recidive.findtime",
+        raw.findtime,
+        DEFAULT_RECIDIVE_FINDTIME,
+    )?;
+    Ok(RecidiveConfig {
+        maxbans,
+        findtime,
+        bantime: long,
     })
 }
 

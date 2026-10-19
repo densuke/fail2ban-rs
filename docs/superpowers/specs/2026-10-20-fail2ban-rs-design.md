@@ -60,6 +60,9 @@ systemd journal から読み、一定時間内に一定回数失敗した IP を
 6. IP ごとに、直近 findtime の間の失敗の時刻を持つ。maxretry 回に達したらブロックし、その IP の記録を消す。
 7. ブロック: `mode = "log"` なら標準出力に記録するだけ。`mode = "nft"` なら timeout = bantime で set に入れる。
    解除は nft の timeout に任せる。
+8. 常習犯 (`[sshd.recidive]` を書いたときだけ): ブロックの時刻も IP ごとに直近 recidive.findtime の間だけ持つ。
+   maxbans 回目のブロックは bantime の代わりに recidive.bantime で行い (`LongBanned`)、その IP のブロックの記録を消して数え直す。
+   通知の `{kind}` は通常のブロックで `通常`、長期ブロックで `長期`、`{bantime}` は実際に使った秒数。
 
 ## 設定 (TOML)
 
@@ -74,6 +77,12 @@ findtime = "10m"
 bantime = "10m"
 # _COMM は一般ユーザーでも偽装できるため、root 発 (_UID=0) の行だけを読む。
 journalmatch = ["_COMM=sshd", "_UID=0", "+", "_COMM=sshd-session", "_UID=0"]
+
+# 省略すると無効。書くと有効 (中身を省くと下の既定値)。bantime は sshd.bantime より長くする。
+# [sshd.recidive]
+# maxbans = 3
+# findtime = "1d"
+# bantime = "1d"
 
 [nft]
 table = "fail2ban_rs"
