@@ -70,10 +70,10 @@ fn check_config(path: &Path) -> Result<(), String> {
 fn test_filter(file: Option<PathBuf>) -> Result<(), String> {
     let filter = SshdFilter::new().map_err(|e| e.to_string())?;
     let reader: Box<dyn BufRead> = match file {
-        Some(p) => Box::new(BufReader::new(
+        Some(p) if p != Path::new("-") => Box::new(BufReader::new(
             File::open(&p).map_err(|e| format!("{} を開けません: {e}", p.display()))?,
         )),
-        None => Box::new(io::stdin().lock()),
+        _ => Box::new(io::stdin().lock()),
     };
     let (mut total, mut matched) = (0u64, 0u64);
     for line in reader.lines() {
@@ -96,6 +96,7 @@ fn test_filter(file: Option<PathBuf>) -> Result<(), String> {
 fn run(path: &Path) -> Result<(), String> {
     let config = load_config(path).map_err(|e| e.to_string())?;
     if !config.sshd.enabled {
+        println!("sshd jail is disabled; exiting");
         return Ok(());
     }
     match config.mode {
@@ -111,6 +112,9 @@ fn run(path: &Path) -> Result<(), String> {
 
 fn run_with<A: BanAction>(config: &Config, action: A) -> Result<(), String> {
     // 設定の検証を先に済ませ、通ってから nft などを触る。
+    if config.ignoreip.is_empty() {
+        eprintln!("警告: ignoreip が空です。自分の接続元もブロックされる可能性があります");
+    }
     let mut engine = Engine::new(config, action).map_err(|e| e.to_string())?;
     engine.start().map_err(|e| e.to_string())?;
     println!(
@@ -134,7 +138,8 @@ fn run_with<A: BanAction>(config: &Config, action: A) -> Result<(), String> {
         match rx.recv_timeout(RECV_TIMEOUT) {
             Ok(entry) => {
                 match engine.handle(&entry) {
-                    Ok(Outcome::Banned(ip)) => {
+                    // log モードでは LogAction が `would ban` を出すので、二重に出さない。
+                    Ok(Outcome::Banned(ip)) if config.mode == Mode::Nft => {
                         println!("ban {ip} for {}s", config.sshd.bantime.as_secs());
                     }
                     Ok(Outcome::Ignored(ip)) => println!("ignored {ip}"),
