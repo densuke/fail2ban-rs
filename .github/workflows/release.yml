@@ -15,7 +15,7 @@ on:
       - 'v*'
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   guard:
@@ -68,7 +68,7 @@ jobs:
           rustup target add ${{ matrix.target }}
 
       - name: Install musl tools
-        # rustls(ring) などの C/asm のビルドに musl-gcc が要る
+        # musl-tools は musl-gcc を入れる。C を含む依存を musl 向けにコンパイルし、リンクに使う
         run: |
           sudo apt-get update
           sudo apt-get install -y musl-tools
@@ -96,6 +96,8 @@ jobs:
   publish:
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Download all build artifacts
         uses: actions/download-artifact@v4

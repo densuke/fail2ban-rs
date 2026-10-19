@@ -22,7 +22,8 @@ sudo install -m 0755 fail2ban-rs-*-linux-musl /usr/local/bin/fail2ban-rs
 設定ファイルとユニットファイルは `deploy/` にあります。
 
 ```bash
-sudo install -D -m 0644 deploy/config.example.toml /etc/fail2ban-rs/config.toml
+# 既存の設定は上書きしない (既にあれば何もしない)
+[ -e /etc/fail2ban-rs/config.toml ] || sudo install -D -m 0644 deploy/config.example.toml /etc/fail2ban-rs/config.toml
 sudo install -m 0644 deploy/fail2ban-rs.service /etc/systemd/system/fail2ban-rs.service
 sudo systemctl daemon-reload
 ```
@@ -55,6 +56,12 @@ would ban 203.0.113.7 for 600s
 
 ```toml
 mode = "nft"
+```
+
+設定の変更は再起動するまで反映されません。
+
+```bash
+sudo systemctl restart fail2ban-rs
 ```
 
 `nft` の mode で実際にブロックすると、ログには `ban <ip> for <secs>s` と出ます。
