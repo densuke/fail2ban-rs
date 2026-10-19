@@ -8,6 +8,11 @@ use std::time::Duration;
 use fail2ban_rs::action::{BanAction, NftAction, nft_ban_script, nft_setup_script};
 use fail2ban_rs::config::NftConfig;
 
+/// 偽の実行ファイルを書いてから起動するテストを直列にする。
+/// 別スレッドの fork が書き込み中の fd を引き継ぐと exec が ETXTBSY になるため、
+/// 子プロセスを起動するテストはすべてこのロックを取る。
+static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 fn nft_config(nft_path: PathBuf) -> NftConfig {
     NftConfig {
         table: "fail2ban_rs".to_string(),
@@ -51,6 +56,7 @@ fn ban_script_ipv6_uses_addr6() {
 
 #[test]
 fn start_fails_when_nft_is_missing() {
+    let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let action = NftAction {
         config: nft_config(PathBuf::from("/nonexistent/nft")),
     };
@@ -59,6 +65,7 @@ fn start_fails_when_nft_is_missing() {
 
 #[test]
 fn start_error_includes_nft_stderr() {
+    let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("fake-nft");
     std::fs::write(
@@ -118,6 +125,7 @@ fn ban_script_does_not_overflow_on_max_duration() {
 
 #[test]
 fn ban_sends_setup_and_ban_in_one_nft_run() {
+    let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("fake-nft");
     let record = dir.path().join("stdin.txt");
