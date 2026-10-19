@@ -60,7 +60,13 @@ impl BanAction for NftAction {
     }
 
     fn ban(&self, ip: IpAddr, bantime: Duration) -> Result<(), ActionError> {
-        let script = nft_ban_script(&self.config.table, ip, bantime);
+        // 表が外から消されても禁止が止まらないよう、毎回表を用意し直してから加える。
+        // 用意の部分は何度流しても set の要素を消さず、1 回の nft で 1 つの取引になる。
+        let script = format!(
+            "{}{}",
+            nft_setup_script(&self.config.table, self.config.priority),
+            nft_ban_script(&self.config.table, ip, bantime)
+        );
         self.run_script(&script)
     }
 }

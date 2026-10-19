@@ -115,3 +115,35 @@ fn ban_script_does_not_overflow_on_max_duration() {
         "add element inet fail2ban_rs addr4 { 192.0.2.10 timeout 18446744073709551615s }\n"
     );
 }
+
+#[test]
+fn ban_sends_setup_and_ban_in_one_nft_run() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("fake-nft");
+    let record = dir.path().join("stdin.txt");
+    let runs = dir.path().join("runs.txt");
+    std::fs::write(
+        &path,
+        format!(
+            "#!/bin/sh\ncat >> {}\necho run >> {}\n",
+            record.display(),
+            runs.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let action = NftAction {
+        config: nft_config(path),
+    };
+    let ip: IpAddr = "192.0.2.10".parse().unwrap();
+    action.ban(ip, Duration::from_secs(600)).unwrap();
+
+    let expected = format!(
+        "{}{}",
+        nft_setup_script("fail2ban_rs", -10),
+        nft_ban_script("fail2ban_rs", ip, Duration::from_secs(600))
+    );
+    assert_eq!(std::fs::read_to_string(&record).unwrap(), expected);
+    assert_eq!(std::fs::read_to_string(&runs).unwrap(), "run\n");
+}

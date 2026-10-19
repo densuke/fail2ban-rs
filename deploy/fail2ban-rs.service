@@ -11,7 +11,7 @@
 
 [Unit]
 Description=fail2ban-rs (sshd の認証失敗を nftables でブロックする)
-After=network.target
+After=network.target nftables.service
 
 [Service]
 Type=simple
