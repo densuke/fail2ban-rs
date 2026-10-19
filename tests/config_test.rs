@@ -122,3 +122,31 @@ fn unknown_key_is_rejected() {
 fn unknown_mode_is_rejected() {
     assert!(parse_config("mode = \"drop\"\n").is_err());
 }
+
+#[test]
+fn empty_journalmatch_is_rejected() {
+    assert!(parse_config("[sshd]\njournalmatch = []\n").is_err());
+}
+
+#[test]
+fn journalmatch_without_a_real_term_is_rejected() {
+    assert!(parse_config("[sshd]\njournalmatch = [\"+\"]\n").is_err());
+    assert!(parse_config("[sshd]\njournalmatch = [\"+\", \"+\"]\n").is_err());
+}
+
+#[test]
+fn journalmatch_option_like_entry_is_rejected() {
+    assert!(parse_config("[sshd]\njournalmatch = [\"--file=/tmp/x\"]\n").is_err());
+    assert!(parse_config("[sshd]\njournalmatch = [\"-x=1\"]\n").is_err());
+    assert!(parse_config("[sshd]\njournalmatch = [\"_comm=sshd\"]\n").is_err());
+    assert!(parse_config("[sshd]\njournalmatch = [\"_COMM\"]\n").is_err());
+}
+
+#[test]
+fn valid_journalmatch_is_accepted() {
+    let config =
+        parse_config("[sshd]\njournalmatch = [\"_COMM=sshd\", \"+\", \"_COMM=sshd-session\"]\n")
+            .unwrap();
+    assert_eq!(config.sshd.journalmatch.len(), 3);
+    assert!(parse_config("[sshd]\njournalmatch = [\"SYSLOG_IDENTIFIER=f2b-e2e\"]\n").is_ok());
+}

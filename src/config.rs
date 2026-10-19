@@ -148,19 +148,57 @@ fn jail_from_raw(raw: RawJail) -> Result<JailConfig, ConfigError> {
             value: maxretry.to_string(),
         });
     }
+    let journalmatch = raw.journalmatch.unwrap_or_else(default_journalmatch);
+    validate_journalmatch(&journalmatch)?;
     Ok(JailConfig {
         enabled: raw.enabled.unwrap_or(true),
         maxretry,
         findtime: duration_or(raw.findtime, DEFAULT_FINDTIME)?,
         bantime: duration_or(raw.bantime, DEFAULT_BANTIME)?,
-        journalmatch: raw.journalmatch.unwrap_or_else(|| {
-            vec![
-                "_COMM=sshd".to_string(),
-                "+".to_string(),
-                "_COMM=sshd-session".to_string(),
-            ]
-        }),
+        journalmatch,
     })
+}
+
+fn default_journalmatch() -> Vec<String> {
+    vec![
+        "_COMM=sshd".to_string(),
+        "+".to_string(),
+        "_COMM=sshd-session".to_string(),
+    ]
+}
+
+/// journalctl に渡す一致条件を検証する。
+///
+/// 空の一覧は journal 全体を読むことになるので拒否する。各要素は `+` か
+/// `FIELD=value` (FIELD は大文字・数字・`_` のみ) に限る。これにより先頭の `-` で
+/// journalctl のオプションとして解釈される要素を防ぐ。
+fn validate_journalmatch(terms: &[String]) -> Result<(), ConfigError> {
+    let invalid = |value: String| ConfigError::InvalidValue {
+        key: "sshd.journalmatch",
+        value,
+    };
+    if !terms.iter().any(|term| term != "+") {
+        return Err(invalid(format!("{terms:?} (一致条件が 1 つも無い)")));
+    }
+    match terms.iter().find(|term| !is_valid_match_term(term)) {
+        Some(term) => Err(invalid(term.clone())),
+        None => Ok(()),
+    }
+}
+
+fn is_valid_match_term(term: &str) -> bool {
+    if term == "+" {
+        return true;
+    }
+    match term.split_once('=') {
+        Some((field, _)) => {
+            !field.is_empty()
+                && field
+                    .bytes()
+                    .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_')
+        }
+        None => false,
+    }
 }
 
 fn nft_from_raw(raw: RawNft) -> Result<NftConfig, ConfigError> {
