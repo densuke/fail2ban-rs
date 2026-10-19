@@ -129,6 +129,8 @@ pub fn nft_ban_script(table: &str, ip: IpAddr, bantime: Duration) -> String {
 
 /// 秒に切り上げる。0 秒は nft で無期限になりうるので、最低 1 秒にする。
 fn timeout_secs(bantime: Duration) -> u64 {
-    let secs = bantime.as_secs() + u64::from(bantime.subsec_nanos() > 0);
+    let secs = bantime
+        .as_secs()
+        .saturating_add(u64::from(bantime.subsec_nanos() > 0));
     secs.max(1)
 }

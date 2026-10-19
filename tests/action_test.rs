@@ -106,3 +106,12 @@ fn ban_script_maps_v4_mapped_to_addr4() {
 "
     );
 }
+
+#[test]
+fn ban_script_does_not_overflow_on_max_duration() {
+    let ip: IpAddr = "192.0.2.10".parse().unwrap();
+    assert_eq!(
+        nft_ban_script("fail2ban_rs", ip, Duration::MAX),
+        "add element inet fail2ban_rs addr4 { 192.0.2.10 timeout 18446744073709551615s }\n"
+    );
+}
