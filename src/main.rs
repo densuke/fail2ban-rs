@@ -13,6 +13,7 @@ use fail2ban_rs::config::{Config, Mode, load_config};
 use fail2ban_rs::engine::{Engine, Outcome};
 use fail2ban_rs::filter::SshdFilter;
 use fail2ban_rs::journal::spawn_reader;
+use fail2ban_rs::notify::{render_command, spawn_notify};
 
 const DEFAULT_CONFIG: &str = "/etc/fail2ban-rs/config.toml";
 /// 受信を待つ最長時間。超えるたびに古い記録を捨てる。
@@ -139,8 +140,16 @@ fn run_with<A: BanAction>(config: &Config, action: A) -> Result<(), String> {
             Ok(entry) => {
                 match engine.handle(&entry) {
                     // log モードでは LogAction が `would ban` を出すので、二重に出さない。
-                    Ok(Outcome::Banned(ip)) if config.mode == Mode::Nft => {
-                        println!("ban {ip} for {}s", config.sshd.bantime.as_secs());
+                    Ok(Outcome::Banned(ip)) => {
+                        if config.mode == Mode::Nft {
+                            println!("ban {ip} for {}s", config.sshd.bantime.as_secs());
+                        }
+                        // 通知は mode に関係なく行う (log モードでも動作を確かめられる)。
+                        if !config.notify.on_ban.is_empty() {
+                            let argv =
+                                render_command(&config.notify.on_ban, ip, config.sshd.bantime);
+                            spawn_notify(&argv);
+                        }
                     }
                     Ok(Outcome::Ignored(ip)) => println!("ignored {ip}"),
                     Ok(_) => {}

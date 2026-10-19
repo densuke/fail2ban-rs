@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use fail2ban_rs::config::{Config, JailConfig, Mode, NftConfig, parse_config};
+use fail2ban_rs::config::{Config, JailConfig, Mode, NftConfig, NotifyConfig, parse_config};
 use fail2ban_rs::duration::parse_duration;
 
 fn default_config() -> Config {
@@ -27,6 +27,7 @@ fn default_config() -> Config {
             nft_path: PathBuf::from("/usr/sbin/nft"),
             journalctl_path: PathBuf::from("/usr/bin/journalctl"),
         },
+        notify: NotifyConfig::default(),
     }
 }
 
@@ -159,4 +160,25 @@ fn bantimeとfindtimeは365日まで() {
     assert!(parse_config("[sshd]\nbantime = \"366d\"\n").is_err());
     assert!(parse_config("[sshd]\nfindtime = \"365d\"\n").is_ok());
     assert!(parse_config("[sshd]\nfindtime = \"366d\"\n").is_err());
+}
+
+#[test]
+fn notify_defaults_to_empty() {
+    assert!(parse_config("").unwrap().notify.on_ban.is_empty());
+}
+
+#[test]
+fn notify_on_ban_is_read() {
+    let config = parse_config("[notify]\non_ban = [\"/bin/echo\", \"{ip}\"]").unwrap();
+    assert_eq!(config.notify.on_ban, vec!["/bin/echo", "{ip}"]);
+}
+
+#[test]
+fn notify_on_ban_requires_absolute_program_path() {
+    assert!(parse_config("[notify]\non_ban = [\"echo\", \"{ip}\"]").is_err());
+}
+
+#[test]
+fn notify_rejects_unknown_key() {
+    assert!(parse_config("[notify]\nfoo = 1").is_err());
 }

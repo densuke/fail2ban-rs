@@ -68,6 +68,22 @@ sudo systemctl restart fail2ban-rs
 
 読む journal の行は、既定で `_UID=0` (root) が書いた sshd / sshd-session のものに限ります。`_COMM` は一般ユーザーでも偽装できるため、偽の失敗行で他人の IP をブロックさせないための条件です。`bantime` と `findtime` は 365 日までです。
 
+## ブロックしたときに通知する
+
+`[notify]` の `on_ban` にコマンドを配列で書くと、ブロックのたびに実行する。
+シェルを通さず、引数をそのまま渡す。先頭の要素は絶対パスにする。
+各要素の `{ip}` はブロックした IP、`{bantime}` は bantime の秒数に置き換わる。
+`mode = "log"` でも実行するので、通知の動作確認に使える。
+通知コマンドが失敗しても、ブロックは妨げない (stderr に 1 行出るだけ)。
+
+```toml
+[notify]
+on_ban = ["/usr/sbin/runuser", "-u", "densuke", "--", "/home/densuke/.local/bin/discord-send-notifier",
+          "--level", "warning", "--title", "fail2ban-rs: {ip} をブロック", "--description", "{bantime} 秒"]
+```
+
+fail2ban-rs は root で動くので、ユーザーのバイナリは上のように `runuser` 経由で呼ぶ。
+
 ## 判定だけを試す: `test-filter`
 
 手元のログに対して sshd のフィルタを当て、判定を確かめられます。1 行 1 メッセージを読み、標準入力 (`-` か省略) か指定したファイルから読みます。
