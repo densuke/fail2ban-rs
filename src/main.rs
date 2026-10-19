@@ -98,14 +98,6 @@ fn run(path: &Path) -> Result<(), String> {
     if !config.sshd.enabled {
         return Ok(());
     }
-    println!(
-        "start mode={:?} maxretry={} findtime={}s bantime={}s ignoreip={:?}",
-        config.mode,
-        config.sshd.maxretry,
-        config.sshd.findtime.as_secs(),
-        config.sshd.bantime.as_secs(),
-        config.ignoreip
-    );
     match config.mode {
         Mode::Log => run_with(&config, LogAction),
         Mode::Nft => run_with(
@@ -118,8 +110,17 @@ fn run(path: &Path) -> Result<(), String> {
 }
 
 fn run_with<A: BanAction>(config: &Config, action: A) -> Result<(), String> {
-    action.start().map_err(|e| e.to_string())?;
+    // 設定の検証を先に済ませ、通ってから nft などを触る。
     let mut engine = Engine::new(config, action).map_err(|e| e.to_string())?;
+    engine.start().map_err(|e| e.to_string())?;
+    println!(
+        "start mode={:?} maxretry={} findtime={}s bantime={}s ignoreip={:?}",
+        config.mode,
+        config.sshd.maxretry,
+        config.sshd.findtime.as_secs(),
+        config.sshd.bantime.as_secs(),
+        config.ignoreip
+    );
     let (tx, rx) = mpsc::channel();
     // スレッドは終了まで走り続けるので JoinHandle は使わない。
     let _reader = spawn_reader(
