@@ -1,0 +1,48 @@
+# fail2ban-rs の設定例。/etc/fail2ban-rs/config.toml に置く。
+# 省いた項目は既定値 (下の各行のコメントを参照) になる。
+
+# 動作モード。
+#   "log": 失敗が閾値に達した IP を標準出力に記録するだけ (既定)。nft には触らない。
+#   "nft": nftables の timeout 付き set に入れて実際にブロックする。
+# 最初は "log" で様子を見て、ログに出た IP が正しいか確かめてから "nft" に切り替える。
+mode = "log"
+
+# 数えず、ブロックもしない接続元。CIDR で書く。
+# 自分の接続元を必ず入れる。ここに入っていない場所から ssh で入ると、
+# ブロックされたときに自分を締め出すおそれがある。
+# 例: 家の LAN (192.168.0.0/16 は例なので実際の範囲に合わせる) と Tailscale (100.64.0.0/10)。
+# 既定値は ["127.0.0.0/8", "::1"]。上書きすると既定値は消えるので、必要なら含めること。
+ignoreip = ["127.0.0.0/8", "::1", "192.168.0.0/16", "100.64.0.0/10"]
+
+[sshd]
+# このジェイルを有効にするか。既定は true。
+enabled = true
+
+# findtime の間にこの回数だけ失敗したらブロックする。既定は 5。
+maxretry = 5
+
+# 失敗を数える期間。既定は "10m"。
+# 時間の書式は 600 (秒)、"30s"、"10m"、"1h"、"1d" のいずれか。
+findtime = "10m"
+
+# ブロックする期間。既定は "10m"。期間が過ぎると nft の timeout で自動的に解除される。
+bantime = "10m"
+
+# journalctl に渡す絞り込み。既定は sshd と sshd-session の両方を読む。
+# "+" は OR を表す。sshd の受付は _COMM=sshd、認証の失敗は _COMM=sshd-session に出る。
+# _COMM は一般ユーザーでも偽装できるため、root 発 (_UID=0) の行だけを読む。
+journalmatch = ["_COMM=sshd", "_UID=0", "+", "_COMM=sshd-session", "_UID=0"]
+
+[nft]
+# 自前で作る nftables の表の名前。inet ファミリーの表として作る。既定は "fail2ban_rs"。
+# 既存の表 (例: iptables-nft の table ip filter) とは別の名前にすること。
+table = "fail2ban_rs"
+
+# input の hook の優先度。小さいほど先に評価される。既定は -10。
+priority = -10
+
+# nft の実行ファイルのパス。既定は "/usr/sbin/nft"。
+nft_path = "/usr/sbin/nft"
+
+# journalctl の実行ファイルのパス。既定は "/usr/bin/journalctl"。
+journalctl_path = "/usr/bin/journalctl"
