@@ -66,3 +66,33 @@ fn ignore_list_matches_canonicalized_ipv4_mapped_address() {
 fn ignore_list_rejects_invalid_entry() {
     assert!(IgnoreList::parse(&entries(&["not-an-ip"])).is_err());
 }
+
+#[test]
+fn ignore_list_matches_raw_ipv4_mapped_ipv6_address() {
+    let list = IgnoreList::parse(&entries(&["127.0.0.0/8"])).unwrap();
+    assert!(list.contains(ip("::ffff:127.0.0.1")));
+}
+
+#[test]
+fn ignore_list_maps_ipv4_mapped_cidr_to_ipv4() {
+    let list = IgnoreList::parse(&entries(&["::ffff:10.0.0.0/104"])).unwrap();
+    assert!(list.contains(ip("10.1.2.3")));
+    assert!(!list.contains(ip("11.0.0.1")));
+}
+
+#[test]
+fn ignore_list_matches_single_ipv4_mapped_entry() {
+    let list = IgnoreList::parse(&entries(&["::ffff:192.168.11.5"])).unwrap();
+    assert!(list.contains(ip("192.168.11.5")));
+}
+
+#[test]
+fn ignore_list_rejects_ipv4_mapped_cidr_shorter_than_96() {
+    assert!(IgnoreList::parse(&entries(&["::ffff:0.0.0.0/80"])).is_err());
+}
+
+#[test]
+fn canonical_ip_rejects_unpaired_brackets() {
+    assert_eq!(canonical_ip("[1.2.3.4"), None);
+    assert_eq!(canonical_ip("1.2.3.4]"), None);
+}
