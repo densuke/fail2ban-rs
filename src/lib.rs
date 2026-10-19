@@ -9,4 +9,5 @@ pub mod engine;
 pub mod filter;
 pub mod ip;
 pub mod journal;
+pub mod notify;
 pub mod tracker;

@@ -66,6 +66,13 @@ pub struct NftConfig {
     pub journalctl_path: PathBuf,
 }
 
+/// 通知の設定。
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct NotifyConfig {
+    /// ブロックのたびに実行するコマンド (引数の配列)。空なら通知しない。
+    pub on_ban: Vec<String>,
+}
+
 /// 検証済みの設定全体。
 #[derive(Debug, Clone, PartialEq)]
 pub struct Config {
@@ -73,6 +80,7 @@ pub struct Config {
     pub ignoreip: Vec<String>,
     pub sshd: JailConfig,
     pub nft: NftConfig,
+    pub notify: NotifyConfig,
 }
 
 #[derive(Deserialize, Default)]
@@ -82,6 +90,7 @@ struct RawConfig {
     ignoreip: Option<Vec<String>>,
     sshd: Option<RawJail>,
     nft: Option<RawNft>,
+    notify: Option<RawNotify>,
 }
 
 #[derive(Deserialize, Default)]
@@ -101,6 +110,12 @@ struct RawNft {
     priority: Option<i32>,
     nft_path: Option<PathBuf>,
     journalctl_path: Option<PathBuf>,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+struct RawNotify {
+    on_ban: Option<Vec<String>>,
 }
 
 /// 時間は整数 (秒) でも `"1h"` のような文字列でも書ける。
@@ -130,6 +145,7 @@ pub fn parse_config(text: &str) -> Result<Config, ConfigError> {
             .unwrap_or_else(|| vec!["127.0.0.0/8".to_string(), "::1".to_string()]),
         sshd: jail_from_raw(raw.sshd.unwrap_or_default())?,
         nft: nft_from_raw(raw.nft.unwrap_or_default())?,
+        notify: notify_from_raw(raw.notify.unwrap_or_default())?,
     })
 }
 
@@ -219,6 +235,18 @@ fn nft_from_raw(raw: RawNft) -> Result<NftConfig, ConfigError> {
             .journalctl_path
             .unwrap_or_else(|| PathBuf::from(DEFAULT_JOURNALCTL_PATH)),
     })
+}
+
+/// 通知コマンドの先頭 (実行ファイル) は絶対パスに限る。PATH 探索で別物が起動するのを防ぐ。
+fn notify_from_raw(raw: RawNotify) -> Result<NotifyConfig, ConfigError> {
+    let on_ban = raw.on_ban.unwrap_or_default();
+    match on_ban.first() {
+        Some(program) if !program.starts_with('/') => Err(ConfigError::InvalidValue {
+            key: "notify.on_ban",
+            value: format!("{program} (先頭の要素は絶対パスにする)"),
+        }),
+        _ => Ok(NotifyConfig { on_ban }),
+    }
 }
 
 /// 表の名前は nft のスクリプトに埋め込むため、英字始まりの英数字と `_` だけを許す。

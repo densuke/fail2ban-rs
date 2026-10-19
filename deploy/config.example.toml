@@ -46,3 +46,14 @@ nft_path = "/usr/sbin/nft"
 
 # journalctl の実行ファイルのパス。既定は "/usr/bin/journalctl"。
 journalctl_path = "/usr/bin/journalctl"
+
+[notify]
+# ブロックのたびに実行するコマンド。空 (既定) なら通知しない。mode が log でも実行する。
+# シェルを通さず、引数の配列としてそのまま実行する。先頭の要素は絶対パスにすること。
+# 各要素の中の {ip} はブロックした IP、{bantime} は bantime の秒数 (整数) に置き換える。
+# fail2ban-rs は root で動くので、ユーザーのバイナリは runuser 経由で呼ぶ。
+# on_ban = [
+#   "/usr/sbin/runuser", "-u", "densuke", "--", "/home/densuke/.local/bin/discord-send-notifier",
+#   "--level", "warning", "--title", "fail2ban-rs: {ip} をブロック", "--description", "{bantime} 秒",
+# ]
+on_ban = []
