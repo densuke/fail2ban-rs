@@ -18,6 +18,8 @@ const DEFAULT_PRIORITY: i32 = -10;
 const DEFAULT_NFT_PATH: &str = "/usr/sbin/nft";
 const DEFAULT_JOURNALCTL_PATH: &str = "/usr/bin/journalctl";
 const MAX_TABLE_NAME_LEN: usize = 32;
+/// bantime と findtime の上限。nft 側で桁あふれして無期限になるのを防ぐ。
+const MAX_DURATION: Duration = Duration::from_secs(365 * 24 * 3600);
 
 /// 設定の読み込み・検証で起きるエラー。
 #[derive(Debug, thiserror::Error)]
@@ -153,17 +155,20 @@ fn jail_from_raw(raw: RawJail) -> Result<JailConfig, ConfigError> {
     Ok(JailConfig {
         enabled: raw.enabled.unwrap_or(true),
         maxretry,
-        findtime: duration_or(raw.findtime, DEFAULT_FINDTIME)?,
-        bantime: duration_or(raw.bantime, DEFAULT_BANTIME)?,
+        findtime: duration_or("sshd.findtime", raw.findtime, DEFAULT_FINDTIME)?,
+        bantime: duration_or("sshd.bantime", raw.bantime, DEFAULT_BANTIME)?,
         journalmatch,
     })
 }
 
 fn default_journalmatch() -> Vec<String> {
+    // _COMM は一般ユーザーでも偽装できるので、root 発 (_UID=0) の行に限る。
     vec![
         "_COMM=sshd".to_string(),
+        "_UID=0".to_string(),
         "+".to_string(),
         "_COMM=sshd-session".to_string(),
+        "_UID=0".to_string(),
     ]
 }
 
@@ -232,6 +237,17 @@ fn validate_table_name(name: &str) -> Result<(), ConfigError> {
     }
 }
 
-fn duration_or(raw: Option<RawDuration>, default: Duration) -> Result<Duration, ConfigError> {
-    raw.map_or(Ok(default), |value| value.to_duration())
+fn duration_or(
+    key: &'static str,
+    raw: Option<RawDuration>,
+    default: Duration,
+) -> Result<Duration, ConfigError> {
+    let value = raw.map_or(Ok(default), |value| value.to_duration())?;
+    if value > MAX_DURATION {
+        return Err(ConfigError::InvalidValue {
+            key,
+            value: format!("{}s (上限は 365 日)", value.as_secs()),
+        });
+    }
+    Ok(value)
 }

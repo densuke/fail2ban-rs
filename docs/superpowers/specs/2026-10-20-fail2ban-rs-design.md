@@ -36,6 +36,9 @@ systemd journal から読み、一定時間内に一定回数失敗した IP を
 ## 実機で確かめた事実 (pi, Ubuntu 26.04, 2026-10-20)
 
 - sshd のログは `_COMM=sshd-session` (受付は `_COMM=sshd`)。ユニットは `ssh.service` で、`sshd.service` ではない。
+- 認証の失敗に関わる sshd / sshd-session のメッセージは `_UID=0` で記録される (`_UID=1000` はログイン後のセッションのメッセージだけ)。
+  `_COMM` は一般ユーザーが `prctl(PR_SET_NAME)` や改名した logger で偽装でき、偽の失敗行で他人の IP をブロックさせられる。
+  そのため既定の journalmatch は各条件に `_UID=0` を AND で足している。
 - `MESSAGE` は文字列。ただし journal の仕様上、バイト列 (数値の配列) で来ることもある。
 - `journalctl --since=-600s`、`--after-cursor=<cursor>`、`A + B` (OR) が使える。
 - nftables v1.1.6。timeout 付き set に同じ要素を `add element` すると、エラーにならず期限が上書きされる。
@@ -69,7 +72,8 @@ enabled = true
 maxretry = 5
 findtime = "10m"
 bantime = "10m"
-journalmatch = ["_COMM=sshd", "+", "_COMM=sshd-session"]
+# _COMM は一般ユーザーでも偽装できるため、root 発 (_UID=0) の行だけを読む。
+journalmatch = ["_COMM=sshd", "_UID=0", "+", "_COMM=sshd-session", "_UID=0"]
 
 [nft]
 table = "fail2ban_rs"
@@ -78,7 +82,7 @@ nft_path = "/usr/sbin/nft"
 journalctl_path = "/usr/bin/journalctl"
 ```
 
-時間の書式は `600`、`30s`、`10m`、`1h`、`1d`。省いた項目は上の既定値。既定の mode が `log` なのは、
+時間の書式は `600`、`30s`、`10m`、`1h`、`1d`。省いた項目は上の既定値。bantime と findtime は 365 日まで (nft 側の桁あふれで無期限にならないように)。既定の mode が `log` なのは、
 ignoreip の書き忘れで自分を締め出さないため。
 
 ## nftables

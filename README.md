@@ -64,11 +64,13 @@ mode = "nft"
 sudo systemctl restart fail2ban-rs
 ```
 
-`nft` の mode で実際にブロックすると、ログには `ban <ip> for <secs>s` と出ます。
+`nft` の mode で実際にブロックすると、ログには `ban <ip> for <secs>s` と出ます (`log` の mode では上の `would ban` だけが出ます)。
+
+読む journal の行は、既定で `_UID=0` (root) が書いた sshd / sshd-session のものに限ります。`_COMM` は一般ユーザーでも偽装できるため、偽の失敗行で他人の IP をブロックさせないための条件です。`bantime` と `findtime` は 365 日までです。
 
 ## 判定だけを試す: `test-filter`
 
-手元のログに対して sshd のフィルタを当て、判定を確かめられます。1 行 1 メッセージを読み、標準入力か指定したファイルから読みます。
+手元のログに対して sshd のフィルタを当て、判定を確かめられます。1 行 1 メッセージを読み、標準入力 (`-` か省略) か指定したファイルから読みます。
 
 ```bash
 journalctl -o cat _COMM=sshd-session | fail2ban-rs test-filter

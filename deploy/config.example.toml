@@ -30,7 +30,8 @@ bantime = "10m"
 
 # journalctl に渡す絞り込み。既定は sshd と sshd-session の両方を読む。
 # "+" は OR を表す。sshd の受付は _COMM=sshd、認証の失敗は _COMM=sshd-session に出る。
-journalmatch = ["_COMM=sshd", "+", "_COMM=sshd-session"]
+# _COMM は一般ユーザーでも偽装できるため、root 発 (_UID=0) の行だけを読む。
+journalmatch = ["_COMM=sshd", "_UID=0", "+", "_COMM=sshd-session", "_UID=0"]
 
 [nft]
 # 自前で作る nftables の表の名前。inet ファミリーの表として作る。既定は "fail2ban_rs"。

@@ -15,8 +15,10 @@ fn default_config() -> Config {
             bantime: Duration::from_secs(600),
             journalmatch: vec![
                 "_COMM=sshd".to_string(),
+                "_UID=0".to_string(),
                 "+".to_string(),
                 "_COMM=sshd-session".to_string(),
+                "_UID=0".to_string(),
             ],
         },
         nft: NftConfig {
@@ -149,4 +151,12 @@ fn valid_journalmatch_is_accepted() {
             .unwrap();
     assert_eq!(config.sshd.journalmatch.len(), 3);
     assert!(parse_config("[sshd]\njournalmatch = [\"SYSLOG_IDENTIFIER=f2b-e2e\"]\n").is_ok());
+}
+
+#[test]
+fn bantimeとfindtimeは365日まで() {
+    assert!(parse_config("[sshd]\nbantime = \"365d\"\n").is_ok());
+    assert!(parse_config("[sshd]\nbantime = \"366d\"\n").is_err());
+    assert!(parse_config("[sshd]\nfindtime = \"365d\"\n").is_ok());
+    assert!(parse_config("[sshd]\nfindtime = \"366d\"\n").is_err());
 }
