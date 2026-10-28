@@ -1,8 +1,10 @@
 //! ログ行から攻撃元を取り出すフィルタ。
 
+mod caddy;
 mod expand;
 mod sshd;
 
+pub use caddy::{AccessEntry, BadPaths, parse_access};
 pub use expand::expand;
 pub use sshd::SshdFilter;
 
