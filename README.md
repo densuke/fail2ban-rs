@@ -107,6 +107,12 @@ journalctl -o cat _COMM=sshd-session | fail2ban-rs test-filter
 fail2ban-rs test-filter /path/to/messages.txt
 ```
 
+Caddy の JSON のアクセスログを試すときは `--jail http` を付けます。行ごとに `badpath <ip> <uri>`、`notfound <ip>`、`other` を出し、最後に件数を出します。
+
+```bash
+journalctl -u caddy -o cat | fail2ban-rs test-filter --jail http
+```
+
 ## 手で解除する・撤去する
 
 ブロックは nft の timeout 付き set に入るので、bantime が過ぎれば自動で解除されます。急いで解除したいときは、要素を消します。
