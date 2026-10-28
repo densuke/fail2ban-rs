@@ -112,15 +112,16 @@ impl<A: BanAction> Engine<A> {
                 return Ok(Outcome::AlreadyBanned(ip, ends));
             }
         }
-        if let Some((_, bans)) = self.recidive.as_mut() {
-            bans.record(ip, entry.time);
-        }
         if let Err(e) = self.action.ban(ip, bantime) {
             // ブロックが掛からなかったので、表の終わる時刻も元に戻す。
             if let Some(ledger) = &self.ledger {
                 ledger.borrow_mut().restore(ip, previous_end);
             }
             return Err(e);
+        }
+        // 掛かったブロックだけを常習犯の回数に数える。
+        if let Some((_, bans)) = self.recidive.as_mut() {
+            bans.record(ip, entry.time);
         }
         Ok(if long.is_some() {
             Outcome::LongBanned(ip)

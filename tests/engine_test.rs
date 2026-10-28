@@ -169,7 +169,7 @@ const MIN: u64 = 60;
 const HOUR: u64 = 3600;
 
 /// start 秒から 3 回失敗させ、最後の結果を返す。
-fn burst(e: &mut Engine<Recorder>, host: &str, start: u64) -> Outcome {
+fn burst<A: BanAction>(e: &mut Engine<A>, host: &str, start: u64) -> Outcome {
     let msg = failed(host);
     let mut last = Outcome::NoMatch;
     for i in 0..3 {
@@ -330,11 +330,12 @@ fn failed_ban_leaves_no_ledger_entry() {
         failing.handle(&entry(&msg, i)).unwrap();
     }
     assert!(failing.handle(&entry(&msg, 2)).is_err());
-    // 同じ表を使う、ブロックに成功する Engine。
+    // 同じ表を使う、ブロックに成功する Engine。0 秒から始めると終わりは失敗時と同じ 302 秒で、
+    // 表が戻っていなければ AlreadyBanned になる。
     let bans: Bans = Rc::default();
     let mut working =
         Engine::new(&config, Recorder::new(bans.clone()), Some(ledger.clone())).unwrap();
-    assert_eq!(burst(&mut working, IP, 10), Outcome::Banned(ip));
+    assert_eq!(burst(&mut working, IP, 0), Outcome::Banned(ip));
     assert_eq!(ban_times(&bans), secs(&[300]));
 }
 
@@ -351,4 +352,49 @@ fn ledger_records_the_end_of_each_ban() {
             .admit(ip, at(2), Duration::from_secs(299)),
         Err(ends)
     );
+}
+
+/// 最初の `failures` 回の ban だけ失敗する BanAction。
+struct Flaky {
+    failures: Cell<u32>,
+    bans: Bans,
+}
+
+impl BanAction for Flaky {
+    fn start(&self) -> Result<(), ActionError> {
+        Ok(())
+    }
+    fn ban(&self, ip: IpAddr, bantime: Duration) -> Result<(), ActionError> {
+        if self.failures.get() > 0 {
+            self.failures.set(self.failures.get() - 1);
+            return Err(ActionError::NftFailed {
+                status: "exit 1".into(),
+                stderr: "boom".into(),
+            });
+        }
+        self.bans.borrow_mut().push((ip, bantime));
+        Ok(())
+    }
+}
+
+#[test]
+fn failed_ban_is_not_counted_toward_recidive() {
+    let bans: Bans = Rc::default();
+    let action = Flaky {
+        failures: Cell::new(1),
+        bans: bans.clone(),
+    };
+    let config = parse_config(RECIDIVE_CONFIG).unwrap();
+    let mut e = Engine::new(&config, action, None).unwrap();
+    let ip: IpAddr = IP.parse().unwrap();
+    let msg = failed(IP);
+    for i in 0..2 {
+        e.handle(&entry(&msg, i)).unwrap();
+    }
+    assert!(e.handle(&entry(&msg, 2)).is_err());
+    // 失敗した分が数えられていたら、2 回目の成功で長期になる。
+    assert_eq!(burst(&mut e, IP, 20 * MIN), Outcome::Banned(ip));
+    assert_eq!(burst(&mut e, IP, 40 * MIN), Outcome::Banned(ip));
+    assert_eq!(burst(&mut e, IP, 60 * MIN), Outcome::LongBanned(ip));
+    assert_eq!(ban_times(&bans), secs(&[300, 300, 86400]));
 }
