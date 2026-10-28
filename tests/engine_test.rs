@@ -303,11 +303,14 @@ fn ban_is_skipped_while_a_longer_ban_is_running() {
 fn already_banned_is_not_counted_toward_recidive() {
     let (mut e, bans, ledger) = ledger_engine();
     let ip: IpAddr = IP.parse().unwrap();
-    let day = Duration::from_secs(24 * HOUR);
-    ledger.borrow_mut().admit(ip, at(0), day).unwrap();
+    // 1 時間で終わるブロックが先にあるので、t=2 秒の閾値到達は AlreadyBanned になる。
+    ledger
+        .borrow_mut()
+        .admit(ip, at(0), Duration::from_secs(HOUR))
+        .unwrap();
     assert!(matches!(burst(&mut e, IP, 0), Outcome::AlreadyBanned(..)));
-    // 1 日のブロックが終わった後に 3 回ブロックさせる。数えられていたら 2 回目で長期になる。
-    let base = 25 * HOUR;
+    // ブロックが終わった後に 3 回 (すべて 24 時間以内)。数えられていたら 2 回目で長期になる。
+    let base = 2 * HOUR;
     assert_eq!(burst(&mut e, IP, base), Outcome::Banned(ip));
     assert_eq!(burst(&mut e, IP, base + 20 * MIN), Outcome::Banned(ip));
     assert_eq!(burst(&mut e, IP, base + 40 * MIN), Outcome::LongBanned(ip));
@@ -315,11 +318,32 @@ fn already_banned_is_not_counted_toward_recidive() {
 }
 
 #[test]
+fn failed_ban_leaves_no_ledger_entry() {
+    let ledger: SharedLedger = Rc::default();
+    let config = parse_config(RECIDIVE_CONFIG).unwrap();
+    let mut rec = Recorder::new(Rc::default());
+    rec.fail_ban = true;
+    let mut failing = Engine::new(&config, rec, Some(ledger.clone())).unwrap();
+    let ip: IpAddr = IP.parse().unwrap();
+    let msg = failed(IP);
+    for i in 0..2 {
+        failing.handle(&entry(&msg, i)).unwrap();
+    }
+    assert!(failing.handle(&entry(&msg, 2)).is_err());
+    // 同じ表を使う、ブロックに成功する Engine。
+    let bans: Bans = Rc::default();
+    let mut working =
+        Engine::new(&config, Recorder::new(bans.clone()), Some(ledger.clone())).unwrap();
+    assert_eq!(burst(&mut working, IP, 10), Outcome::Banned(ip));
+    assert_eq!(ban_times(&bans), secs(&[300]));
+}
+
+#[test]
 fn ledger_records_the_end_of_each_ban() {
     let (mut e, _, ledger) = ledger_engine();
     let ip: IpAddr = IP.parse().unwrap();
     burst(&mut e, IP, 0);
-    // 3 回目の失敗 (2 秒後) から 300 秒。同じ長さの再ブロックは延長として通る。
+    // 表には 3 回目の失敗 (2 秒後) + 300 秒が入る。これより短く終わるブロックは断られる。
     let ends = at(2) + Duration::from_secs(300);
     assert_eq!(
         ledger

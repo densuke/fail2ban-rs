@@ -43,6 +43,20 @@ impl BanLedger {
         }
     }
 
+    /// `ip` の今の終わる時刻。
+    pub fn end_of(&self, ip: IpAddr) -> Option<SystemTime> {
+        self.ends.get(&ip).copied()
+    }
+
+    /// `ip` の終わる時刻を `previous` に戻す。`None` なら消す。
+    /// 入れたブロックが実際には掛からなかったときに使う。
+    pub fn restore(&mut self, ip: IpAddr, previous: Option<SystemTime>) {
+        match previous {
+            Some(end) => self.ends.insert(ip, end),
+            None => self.ends.remove(&ip),
+        };
+    }
+
     /// 終わる時刻が `now` 以前の IP を消す。
     pub fn prune(&mut self, now: SystemTime) {
         self.ends.retain(|_, end| *end > now);

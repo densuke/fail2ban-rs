@@ -44,6 +44,11 @@ fn prune_drops_ended_bans() {
     l.admit(a, at(0), s(86400)).unwrap();
     l.prune(at(86400));
     assert_eq!(l.admit(a, at(86401), s(300)), Ok(()));
+    // 残っていれば at(86400) 以前に終わる短いブロックは断られるはず。
+    let mut l = BanLedger::new();
+    l.admit(a, at(0), s(86400)).unwrap();
+    l.prune(at(86400));
+    assert_eq!(l.admit(a, at(0), s(86400)), Ok(()));
 }
 
 #[test]
