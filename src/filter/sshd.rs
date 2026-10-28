@@ -2,12 +2,9 @@
 //!
 //! 式は `docs/upstream/sshd.conf` からそのまま写している。順序も上流と同じ。
 
-use fancy_regex::{Regex, RegexBuilder};
+use fancy_regex::Regex;
 
-use super::{FilterError, FilterMatch, expand};
-
-/// 攻撃者が行を書けるので、バックトラックの上限を付ける。
-const BACKTRACK_LIMIT: usize = 100_000;
+use super::{FilterError, FilterMatch, build, expand};
 
 /// 上流の `prefregex` のうち、journal で残る部分。
 /// `__prefix_line` の `__kernel_prefix` (`kernel: [ 970.69]:` など) と、
@@ -62,16 +59,6 @@ fn templates() -> Vec<&'static str> {
         // cfooterre
         r"^<F-NOFAIL>Connection from</F-NOFAIL> <HOST>",
     ]
-}
-
-fn build(pattern: &str) -> Result<Regex, FilterError> {
-    RegexBuilder::new(pattern)
-        .backtrack_limit(BACKTRACK_LIMIT)
-        .build()
-        .map_err(|e| FilterError::Regex {
-            pattern: pattern.to_string(),
-            source: Box::new(e),
-        })
 }
 
 pub struct SshdFilter {
