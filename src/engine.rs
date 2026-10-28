@@ -8,6 +8,7 @@ use crate::config::{Config, ConfigError, RecidiveConfig};
 use crate::filter::{FilterError, SshdFilter};
 use crate::ip::{IgnoreList, canonical_ip};
 use crate::journal::LogEntry;
+use crate::ledger::SharedLedger;
 use crate::tracker::FailTracker;
 
 /// 1 行を処理した結果。
@@ -25,6 +26,9 @@ pub enum Outcome {
     Banned(IpAddr),
     /// 常習犯なので、長い期間でブロックした。
     LongBanned(IpAddr),
+    /// 上限に達したが、すでにこれより長いブロックが続いているので何もしなかった。
+    /// 値は、そのブロックの終わる時刻。
+    AlreadyBanned(IpAddr, SystemTime),
 }
 
 /// Engine を作るときのエラー。
@@ -44,11 +48,17 @@ pub struct Engine<A: BanAction> {
     bantime: Duration,
     /// 常習犯の設定と、ブロックの回数を数える tracker。無効なら `None`。
     recidive: Option<(RecidiveConfig, FailTracker)>,
+    /// ブロックの終わる時刻の共有表。`None` なら見ない。
+    ledger: Option<SharedLedger>,
     action: A,
 }
 
 impl<A: BanAction> Engine<A> {
-    pub fn new(config: &Config, action: A) -> Result<Self, EngineError> {
+    pub fn new(
+        config: &Config,
+        action: A,
+        ledger: Option<SharedLedger>,
+    ) -> Result<Self, EngineError> {
         Ok(Self {
             filter: SshdFilter::new()?,
             ignore: IgnoreList::parse(&config.ignoreip)?,
@@ -59,6 +69,7 @@ impl<A: BanAction> Engine<A> {
                 .recidive
                 .clone()
                 .map(|r| (r.clone(), FailTracker::new(r.findtime, r.maxbans))),
+            ledger,
             action,
         })
     }
@@ -86,14 +97,27 @@ impl<A: BanAction> Engine<A> {
             return Ok(Outcome::Counted(ip));
         }
         // maxbans 回目のブロックなら長期ブロックにする (記録は tracker 側で消える)。
-        if let Some((recidive, bans)) = self.recidive.as_mut()
-            && bans.record(ip, entry.time)
+        let long = self
+            .recidive
+            .as_ref()
+            .filter(|(_, bans)| bans.would_reach(ip, entry.time))
+            .map(|(recidive, _)| recidive.bantime);
+        let bantime = long.unwrap_or(self.bantime);
+        // 終わりがもっと先のブロックがあれば何もしない。常習犯の回数にも数えない。
+        if let Some(ledger) = &self.ledger
+            && let Err(ends) = ledger.borrow_mut().admit(ip, entry.time, bantime)
         {
-            self.action.ban(ip, recidive.bantime)?;
-            return Ok(Outcome::LongBanned(ip));
+            return Ok(Outcome::AlreadyBanned(ip, ends));
         }
-        self.action.ban(ip, self.bantime)?;
-        Ok(Outcome::Banned(ip))
+        if let Some((_, bans)) = self.recidive.as_mut() {
+            bans.record(ip, entry.time);
+        }
+        self.action.ban(ip, bantime)?;
+        Ok(if long.is_some() {
+            Outcome::LongBanned(ip)
+        } else {
+            Outcome::Banned(ip)
+        })
     }
 
     /// ブロックの結果に対応するブロック期間。ブロックではない結果なら `None`。

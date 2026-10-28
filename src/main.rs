@@ -129,7 +129,7 @@ fn run_with<A: BanAction>(config: &Config, action: A) -> Result<(), String> {
     if config.ignoreip.is_empty() {
         eprintln!("警告: ignoreip が空です。自分の接続元もブロックされる可能性があります");
     }
-    let mut engine = Engine::new(config, action).map_err(|e| e.to_string())?;
+    let mut engine = Engine::new(config, action, None).map_err(|e| e.to_string())?;
     engine.start().map_err(|e| e.to_string())?;
     println!(
         "start mode={:?} maxretry={} findtime={}s bantime={}s recidive={} ignoreip={:?}",
