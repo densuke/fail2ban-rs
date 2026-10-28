@@ -10,6 +10,10 @@ use serde::Deserialize;
 
 use crate::duration::parse_duration;
 
+mod http;
+
+pub use http::{BadpathConfig, HttpConfig, NotfoundConfig};
+
 const DEFAULT_MAXRETRY: u32 = 5;
 const DEFAULT_FINDTIME: Duration = Duration::from_secs(600);
 const DEFAULT_BANTIME: Duration = Duration::from_secs(600);
@@ -92,6 +96,8 @@ pub struct Config {
     pub mode: Mode,
     pub ignoreip: Vec<String>,
     pub sshd: JailConfig,
+    /// HTTP (Caddy) ジェイル。`[http]` が無ければ `None`。
+    pub http: Option<HttpConfig>,
     pub nft: NftConfig,
     pub notify: NotifyConfig,
 }
@@ -102,6 +108,7 @@ struct RawConfig {
     mode: Option<Mode>,
     ignoreip: Option<Vec<String>>,
     sshd: Option<RawJail>,
+    http: Option<http::RawHttp>,
     nft: Option<RawNft>,
     notify: Option<RawNotify>,
 }
@@ -160,12 +167,14 @@ impl RawDuration {
 /// TOML 文字列から検証済みの設定を作る。空文字なら既定値だけの設定になる。
 pub fn parse_config(text: &str) -> Result<Config, ConfigError> {
     let raw: RawConfig = toml::from_str(text)?;
+    let mode = raw.mode.unwrap_or(Mode::Log);
     Ok(Config {
-        mode: raw.mode.unwrap_or(Mode::Log),
+        mode,
         ignoreip: raw
             .ignoreip
             .unwrap_or_else(|| vec!["127.0.0.0/8".to_string(), "::1".to_string()]),
         sshd: jail_from_raw(raw.sshd.unwrap_or_default())?,
+        http: raw.http.map(|h| http::http_from_raw(h, mode)).transpose()?,
         nft: nft_from_raw(raw.nft.unwrap_or_default())?,
         notify: notify_from_raw(raw.notify.unwrap_or_default())?,
     })
@@ -189,11 +198,11 @@ fn jail_from_raw(raw: RawJail) -> Result<JailConfig, ConfigError> {
         });
     }
     let journalmatch = raw.journalmatch.unwrap_or_else(default_journalmatch);
-    validate_journalmatch(&journalmatch)?;
+    validate_journalmatch("sshd.journalmatch", &journalmatch)?;
     let bantime = duration_or("sshd.bantime", raw.bantime, DEFAULT_BANTIME)?;
     let recidive = raw
         .recidive
-        .map(|r| recidive_from_raw(r, bantime))
+        .map(|r| recidive_from_raw(&SSHD_RECIDIVE_KEYS, r, bantime))
         .transpose()?;
     Ok(JailConfig {
         enabled: raw.enabled.unwrap_or(true),
@@ -205,31 +214,49 @@ fn jail_from_raw(raw: RawJail) -> Result<JailConfig, ConfigError> {
     })
 }
 
+/// 長期ブロックの検証で使う、ジェイルごとの設定キーの名前。
+struct RecidiveKeys {
+    bantime_base: &'static str,
+    maxbans: &'static str,
+    bantime: &'static str,
+    findtime: &'static str,
+}
+
+const SSHD_RECIDIVE_KEYS: RecidiveKeys = RecidiveKeys {
+    bantime_base: "sshd.bantime",
+    maxbans: "sshd.recidive.maxbans",
+    bantime: "sshd.recidive.bantime",
+    findtime: "sshd.recidive.findtime",
+};
+
+const HTTP_RECIDIVE_KEYS: RecidiveKeys = RecidiveKeys {
+    bantime_base: "http.bantime",
+    maxbans: "http.recidive.maxbans",
+    bantime: "http.recidive.bantime",
+    findtime: "http.recidive.findtime",
+};
+
 /// 長期ブロックは通常より長くなければ意味がないので、`bantime` 以下は拒否する。
-fn recidive_from_raw(raw: RawRecidive, bantime: Duration) -> Result<RecidiveConfig, ConfigError> {
+fn recidive_from_raw(
+    keys: &RecidiveKeys,
+    raw: RawRecidive,
+    bantime: Duration,
+) -> Result<RecidiveConfig, ConfigError> {
     let maxbans = raw.maxbans.unwrap_or(DEFAULT_RECIDIVE_MAXBANS);
     if maxbans < 2 {
         return Err(ConfigError::InvalidValue {
-            key: "sshd.recidive.maxbans",
+            key: keys.maxbans,
             value: maxbans.to_string(),
         });
     }
-    let long = duration_or(
-        "sshd.recidive.bantime",
-        raw.bantime,
-        DEFAULT_RECIDIVE_BANTIME,
-    )?;
+    let long = duration_or(keys.bantime, raw.bantime, DEFAULT_RECIDIVE_BANTIME)?;
     if long <= bantime {
         return Err(ConfigError::InvalidValue {
-            key: "sshd.recidive.bantime",
-            value: format!("{}s (sshd.bantime より長くする)", long.as_secs()),
+            key: keys.bantime,
+            value: format!("{}s ({} より長くする)", long.as_secs(), keys.bantime_base),
         });
     }
-    let findtime = duration_or(
-        "sshd.recidive.findtime",
-        raw.findtime,
-        DEFAULT_RECIDIVE_FINDTIME,
-    )?;
+    let findtime = duration_or(keys.findtime, raw.findtime, DEFAULT_RECIDIVE_FINDTIME)?;
     Ok(RecidiveConfig {
         maxbans,
         findtime,
@@ -253,11 +280,8 @@ fn default_journalmatch() -> Vec<String> {
 /// 空の一覧は journal 全体を読むことになるので拒否する。各要素は `+` か
 /// `FIELD=value` (FIELD は大文字・数字・`_` のみ) に限る。これにより先頭の `-` で
 /// journalctl のオプションとして解釈される要素を防ぐ。
-fn validate_journalmatch(terms: &[String]) -> Result<(), ConfigError> {
-    let invalid = |value: String| ConfigError::InvalidValue {
-        key: "sshd.journalmatch",
-        value,
-    };
+fn validate_journalmatch(key: &'static str, terms: &[String]) -> Result<(), ConfigError> {
+    let invalid = |value: String| ConfigError::InvalidValue { key, value };
     if !terms.iter().any(|term| term != "+") {
         return Err(invalid(format!("{terms:?} (一致条件が 1 つも無い)")));
     }

@@ -4,10 +4,12 @@ use std::net::IpAddr;
 use std::time::{Duration, SystemTime};
 
 use crate::action::{ActionError, BanAction};
-use crate::config::{Config, ConfigError, RecidiveConfig};
+use crate::ban_step::{BanStep, Recidive, ban_step};
+use crate::config::{Config, ConfigError};
 use crate::filter::{FilterError, SshdFilter};
 use crate::ip::{IgnoreList, canonical_ip};
 use crate::journal::LogEntry;
+use crate::ledger::SharedLedger;
 use crate::tracker::FailTracker;
 
 /// 1 行を処理した結果。
@@ -25,6 +27,9 @@ pub enum Outcome {
     Banned(IpAddr),
     /// 常習犯なので、長い期間でブロックした。
     LongBanned(IpAddr),
+    /// 上限に達したが、すでにこれより長いブロックが続いているので何もしなかった。
+    /// 値は、そのブロックの終わる時刻。
+    AlreadyBanned(IpAddr, SystemTime),
 }
 
 /// Engine を作るときのエラー。
@@ -43,12 +48,18 @@ pub struct Engine<A: BanAction> {
     tracker: FailTracker,
     bantime: Duration,
     /// 常習犯の設定と、ブロックの回数を数える tracker。無効なら `None`。
-    recidive: Option<(RecidiveConfig, FailTracker)>,
+    recidive: Option<Recidive>,
+    /// ブロックの終わる時刻の共有表。`None` なら見ない。
+    ledger: Option<SharedLedger>,
     action: A,
 }
 
 impl<A: BanAction> Engine<A> {
-    pub fn new(config: &Config, action: A) -> Result<Self, EngineError> {
+    pub fn new(
+        config: &Config,
+        action: A,
+        ledger: Option<SharedLedger>,
+    ) -> Result<Self, EngineError> {
         Ok(Self {
             filter: SshdFilter::new()?,
             ignore: IgnoreList::parse(&config.ignoreip)?,
@@ -59,6 +70,7 @@ impl<A: BanAction> Engine<A> {
                 .recidive
                 .clone()
                 .map(|r| (r.clone(), FailTracker::new(r.findtime, r.maxbans))),
+            ledger,
             action,
         })
     }
@@ -85,15 +97,19 @@ impl<A: BanAction> Engine<A> {
         if !self.tracker.record(ip, entry.time) {
             return Ok(Outcome::Counted(ip));
         }
-        // maxbans 回目のブロックなら長期ブロックにする (記録は tracker 側で消える)。
-        if let Some((recidive, bans)) = self.recidive.as_mut()
-            && bans.record(ip, entry.time)
-        {
-            self.action.ban(ip, recidive.bantime)?;
-            return Ok(Outcome::LongBanned(ip));
-        }
-        self.action.ban(ip, self.bantime)?;
-        Ok(Outcome::Banned(ip))
+        let step = ban_step(
+            &self.action,
+            self.ledger.as_ref(),
+            self.recidive.as_mut(),
+            ip,
+            entry.time,
+            self.bantime,
+        )?;
+        Ok(match step {
+            BanStep::AlreadyBanned(ends) => Outcome::AlreadyBanned(ip, ends),
+            BanStep::Banned { long: true, .. } => Outcome::LongBanned(ip),
+            BanStep::Banned { long: false, .. } => Outcome::Banned(ip),
+        })
     }
 
     /// ブロックの結果に対応するブロック期間。ブロックではない結果なら `None`。

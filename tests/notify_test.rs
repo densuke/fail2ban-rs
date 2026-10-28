@@ -25,7 +25,14 @@ fn render_replaces_every_placeholder() {
         "{other}",
     ]);
     assert_eq!(
-        render_command(&template, ip, Duration::from_secs(300), "長期"),
+        render_command(
+            &template,
+            ip,
+            Duration::from_secs(300),
+            "長期",
+            "sshd",
+            "sshd"
+        ),
         strings(&[
             "/bin/x",
             "--t",
@@ -38,17 +45,34 @@ fn render_replaces_every_placeholder() {
 }
 
 #[test]
+fn render_replaces_jail_and_rule() {
+    let ip: IpAddr = "192.0.2.7".parse().unwrap();
+    let template = strings(&["{jail}:{rule}:{kind}"]);
+    assert_eq!(
+        render_command(
+            &template,
+            ip,
+            Duration::from_secs(300),
+            "長期",
+            "http",
+            "badpath"
+        ),
+        strings(&["http:badpath:長期"])
+    );
+}
+
+#[test]
 fn render_uses_canonical_ip() {
     let mapped: IpAddr = "::ffff:192.0.2.6".parse().unwrap();
     let v6: IpAddr = "2001:db8::1".parse().unwrap();
     let template = strings(&["{ip}"]);
     let secs = Duration::from_secs(1);
     assert_eq!(
-        render_command(&template, mapped, secs, "通常"),
+        render_command(&template, mapped, secs, "通常", "sshd", "sshd"),
         strings(&["192.0.2.6"])
     );
     assert_eq!(
-        render_command(&template, v6, secs, "通常"),
+        render_command(&template, v6, secs, "通常", "sshd", "sshd"),
         strings(&["2001:db8::1"])
     );
 }

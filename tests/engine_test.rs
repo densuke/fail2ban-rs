@@ -9,6 +9,7 @@ use fail2ban_rs::action::{ActionError, BanAction};
 use fail2ban_rs::config::{Config, parse_config};
 use fail2ban_rs::engine::{Engine, Outcome};
 use fail2ban_rs::journal::LogEntry;
+use fail2ban_rs::ledger::SharedLedger;
 
 type Bans = Rc<RefCell<Vec<(IpAddr, Duration)>>>;
 
@@ -47,7 +48,7 @@ impl BanAction for Recorder {
 
 fn engine(config: &Config) -> (Engine<Recorder>, Bans) {
     let bans: Bans = Rc::default();
-    let e = Engine::new(config, Recorder::new(bans.clone())).unwrap();
+    let e = Engine::new(config, Recorder::new(bans.clone()), None).unwrap();
     (e, bans)
 }
 
@@ -129,7 +130,7 @@ fn invalid_ignoreip_fails_before_action_start() {
     let config = parse_config("ignoreip = [\"not-an-ip\"]").unwrap();
     let rec = Recorder::new(Rc::default());
     let starts = rec.starts.clone();
-    assert!(Engine::new(&config, rec).is_err());
+    assert!(Engine::new(&config, rec, None).is_err());
     assert_eq!(starts.get(), 0);
 }
 
@@ -137,7 +138,7 @@ fn invalid_ignoreip_fails_before_action_start() {
 fn engine_start_calls_action_start() {
     let rec = Recorder::new(Rc::default());
     let starts = rec.starts.clone();
-    let e = Engine::new(&parse_config("").unwrap(), rec).unwrap();
+    let e = Engine::new(&parse_config("").unwrap(), rec, None).unwrap();
     assert_eq!(starts.get(), 0);
     e.start().unwrap();
     assert_eq!(starts.get(), 1);
@@ -147,7 +148,7 @@ fn engine_start_calls_action_start() {
 fn ban_failure_is_returned() {
     let mut rec = Recorder::new(Rc::default());
     rec.fail_ban = true;
-    let mut e = Engine::new(&parse_config("").unwrap(), rec).unwrap();
+    let mut e = Engine::new(&parse_config("").unwrap(), rec, None).unwrap();
     let msg = failed("192.0.2.40");
     for i in 0..4 {
         assert!(e.handle(&entry(&msg, i)).is_ok());
@@ -168,7 +169,7 @@ const MIN: u64 = 60;
 const HOUR: u64 = 3600;
 
 /// start 秒から 3 回失敗させ、最後の結果を返す。
-fn burst(e: &mut Engine<Recorder>, host: &str, start: u64) -> Outcome {
+fn burst<A: BanAction>(e: &mut Engine<A>, host: &str, start: u64) -> Outcome {
     let msg = failed(host);
     let mut last = Outcome::NoMatch;
     for i in 0..3 {
@@ -271,4 +272,141 @@ fn prune_forgets_old_bans() {
     e.prune(SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000 + 3 * 86400));
     assert_eq!(burst(&mut e, IP, 40 * MIN), Outcome::Banned(ip));
     assert_eq!(ban_times(&bans), secs(&[300, 300, 300]));
+}
+
+fn ledger_engine() -> (Engine<Recorder>, Bans, SharedLedger) {
+    let bans: Bans = Rc::default();
+    let ledger: SharedLedger = Rc::default();
+    let config = parse_config(RECIDIVE_CONFIG).unwrap();
+    let e = Engine::new(&config, Recorder::new(bans.clone()), Some(ledger.clone())).unwrap();
+    (e, bans, ledger)
+}
+
+fn at(secs: u64) -> SystemTime {
+    entry("", secs).time
+}
+
+#[test]
+fn ban_is_skipped_while_a_longer_ban_is_running() {
+    let (mut e, bans, ledger) = ledger_engine();
+    let ip: IpAddr = IP.parse().unwrap();
+    let day = Duration::from_secs(24 * HOUR);
+    ledger.borrow_mut().admit(ip, at(0), day).unwrap();
+    assert_eq!(
+        burst(&mut e, IP, 0),
+        Outcome::AlreadyBanned(ip, at(0) + day)
+    );
+    assert!(bans.borrow().is_empty());
+}
+
+#[test]
+fn already_banned_is_not_counted_toward_recidive() {
+    let (mut e, bans, ledger) = ledger_engine();
+    let ip: IpAddr = IP.parse().unwrap();
+    // 1 時間で終わるブロックが先にあるので、t=2 秒の閾値到達は AlreadyBanned になる。
+    ledger
+        .borrow_mut()
+        .admit(ip, at(0), Duration::from_secs(HOUR))
+        .unwrap();
+    assert!(matches!(burst(&mut e, IP, 0), Outcome::AlreadyBanned(..)));
+    // ブロックが終わった後に 3 回 (すべて 24 時間以内)。数えられていたら 2 回目で長期になる。
+    let base = 2 * HOUR;
+    assert_eq!(burst(&mut e, IP, base), Outcome::Banned(ip));
+    assert_eq!(burst(&mut e, IP, base + 20 * MIN), Outcome::Banned(ip));
+    assert_eq!(burst(&mut e, IP, base + 40 * MIN), Outcome::LongBanned(ip));
+    assert_eq!(ban_times(&bans), secs(&[300, 300, 86400]));
+}
+
+#[test]
+fn failed_ban_leaves_no_ledger_entry() {
+    let ledger: SharedLedger = Rc::default();
+    let config = parse_config(RECIDIVE_CONFIG).unwrap();
+    let mut rec = Recorder::new(Rc::default());
+    rec.fail_ban = true;
+    let mut failing = Engine::new(&config, rec, Some(ledger.clone())).unwrap();
+    let ip: IpAddr = IP.parse().unwrap();
+    let msg = failed(IP);
+    for i in 0..2 {
+        failing.handle(&entry(&msg, i)).unwrap();
+    }
+    assert!(failing.handle(&entry(&msg, 2)).is_err());
+    // 同じ表を使う、ブロックに成功する Engine。0 秒から始めると終わりは失敗時と同じ 302 秒で、
+    // 表が戻っていなければ AlreadyBanned になる。
+    let bans: Bans = Rc::default();
+    let mut working =
+        Engine::new(&config, Recorder::new(bans.clone()), Some(ledger.clone())).unwrap();
+    assert_eq!(burst(&mut working, IP, 0), Outcome::Banned(ip));
+    assert_eq!(ban_times(&bans), secs(&[300]));
+}
+
+#[test]
+fn ledger_records_the_end_of_each_ban() {
+    let (mut e, _, ledger) = ledger_engine();
+    let ip: IpAddr = IP.parse().unwrap();
+    burst(&mut e, IP, 0);
+    // 表には 3 回目の失敗 (2 秒後) + 300 秒が入る。これより短く終わるブロックは断られる。
+    let ends = at(2) + Duration::from_secs(300);
+    assert_eq!(
+        ledger
+            .borrow_mut()
+            .admit(ip, at(2), Duration::from_secs(299)),
+        Err(ends)
+    );
+}
+
+/// 最初の `failures` 回の ban だけ失敗する BanAction。
+struct Flaky {
+    failures: Cell<u32>,
+    bans: Bans,
+}
+
+impl BanAction for Flaky {
+    fn start(&self) -> Result<(), ActionError> {
+        Ok(())
+    }
+    fn ban(&self, ip: IpAddr, bantime: Duration) -> Result<(), ActionError> {
+        if self.failures.get() > 0 {
+            self.failures.set(self.failures.get() - 1);
+            return Err(ActionError::NftFailed {
+                status: "exit 1".into(),
+                stderr: "boom".into(),
+            });
+        }
+        self.bans.borrow_mut().push((ip, bantime));
+        Ok(())
+    }
+}
+
+#[test]
+fn failed_ban_is_not_counted_toward_recidive() {
+    let bans: Bans = Rc::default();
+    let action = Flaky {
+        failures: Cell::new(1),
+        bans: bans.clone(),
+    };
+    let config = parse_config(RECIDIVE_CONFIG).unwrap();
+    let mut e = Engine::new(&config, action, None).unwrap();
+    let ip: IpAddr = IP.parse().unwrap();
+    let msg = failed(IP);
+    for i in 0..2 {
+        e.handle(&entry(&msg, i)).unwrap();
+    }
+    assert!(e.handle(&entry(&msg, 2)).is_err());
+    // 失敗した分が数えられていたら、2 回目の成功で長期になる。
+    assert_eq!(burst(&mut e, IP, 20 * MIN), Outcome::Banned(ip));
+    assert_eq!(burst(&mut e, IP, 40 * MIN), Outcome::Banned(ip));
+    assert_eq!(burst(&mut e, IP, 60 * MIN), Outcome::LongBanned(ip));
+    assert_eq!(ban_times(&bans), secs(&[300, 300, 86400]));
+}
+
+#[test]
+fn threshold_during_a_running_ban_does_not_extend_it() {
+    let (mut e, bans, ledger) = ledger_engine();
+    let ip: IpAddr = IP.parse().unwrap();
+    assert_eq!(burst(&mut e, IP, 0), Outcome::Banned(ip));
+    let end = ledger.borrow().end_of(ip).unwrap();
+    // ブロックの途中で再び閾値に達しても、延ばさず、送らない。
+    assert_eq!(burst(&mut e, IP, 60), Outcome::AlreadyBanned(ip, end));
+    assert_eq!(ledger.borrow().end_of(ip), Some(end));
+    assert_eq!(ban_times(&bans), secs(&[300]));
 }

@@ -42,6 +42,17 @@ impl FailTracker {
         }
     }
 
+    /// `record(ip, at)` をしたら `true` になるかを、状態を変えずに返す。
+    pub fn would_reach(&self, ip: IpAddr, at: SystemTime) -> bool {
+        let within = self.failures.get(&ip).map_or(0, |times| {
+            times
+                .iter()
+                .filter(|t| is_within(at, **t, self.findtime))
+                .count()
+        });
+        within + 1 >= self.maxretry as usize
+    }
+
     /// `now` から見て窓の外に出た記録を捨て、空になった IP を消す。
     pub fn prune(&mut self, now: SystemTime) {
         let findtime = self.findtime;

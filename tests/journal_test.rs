@@ -109,10 +109,10 @@ exit 0
     std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
 
     let (tx, rx) = mpsc::channel();
-    let _h = spawn_reader(script, matches(), Duration::from_secs(600), tx);
-    let first = rx.recv_timeout(Duration::from_secs(15)).unwrap();
+    let _h = spawn_reader(script, matches(), Duration::from_secs(600), (), tx);
+    let ((), first) = rx.recv_timeout(Duration::from_secs(15)).unwrap();
     assert_eq!(first.cursor.as_deref(), Some("c1"));
-    let second = rx.recv_timeout(Duration::from_secs(15)).unwrap();
+    let ((), second) = rx.recv_timeout(Duration::from_secs(15)).unwrap();
     assert!(second.message.contains("--after-cursor=c1"), "{second:?}");
 }
 
@@ -124,6 +124,7 @@ fn 最初の起動に失敗したらチャネルを閉じる() {
         "/nonexistent/journalctl".into(),
         matches(),
         Duration::from_secs(600),
+        (),
         tx,
     );
     assert_eq!(

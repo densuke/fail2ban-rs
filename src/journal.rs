@@ -71,11 +71,14 @@ pub fn journalctl_args(
 ///
 /// journalctl が終わったら理由を stderr に出し、5 秒待って最後のカーソルから起動し直す。
 /// `tx` の送信に失敗したら (受け手が終わったら) スレッドを終える。
-pub fn spawn_reader(
+///
+/// 送る行には `tag` を添える。複数の jail が 1 つのチャネルを共有するとき、どの jail の行かを区別する。
+pub fn spawn_reader<T: Copy + Send + 'static>(
     journalctl: PathBuf,
     matches: Vec<String>,
     findtime: Duration,
-    tx: Sender<LogEntry>,
+    tag: T,
+    tx: Sender<(T, LogEntry)>,
 ) -> JoinHandle<()> {
     thread::spawn(move || {
         let mut cursor: Option<String> = None;
@@ -105,7 +108,8 @@ pub fn spawn_reader(
                         thread::sleep(RESTART_DELAY);
                         continue;
                     };
-                    let receiver_alive = forward_lines(BufReader::new(stdout), &tx, &mut cursor);
+                    let receiver_alive =
+                        forward_lines(BufReader::new(stdout), tag, &tx, &mut cursor);
                     // 読み取りエラーで抜けた場合も、子が生きたままだと wait が戻らない。
                     let _ = child.kill();
                     if !receiver_alive {
@@ -124,9 +128,10 @@ pub fn spawn_reader(
 }
 
 /// 行を読み切るまで `tx` に送る。送信に失敗したら `false`。
-fn forward_lines(
+fn forward_lines<T: Copy>(
     mut reader: impl BufRead,
-    tx: &Sender<LogEntry>,
+    tag: T,
+    tx: &Sender<(T, LogEntry)>,
     cursor: &mut Option<String>,
 ) -> bool {
     let mut buf = Vec::new();
@@ -145,7 +150,7 @@ fn forward_lines(
             continue;
         };
         let seen = entry.cursor.clone();
-        if tx.send(entry).is_err() {
+        if tx.send((tag, entry)).is_err() {
             return false;
         }
         if seen.is_some() {

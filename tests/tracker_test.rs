@@ -106,3 +106,27 @@ fn prune_with_earlier_now_keeps_entries() {
     t.prune(at(0));
     assert_eq!(t.len(), 1);
 }
+
+#[test]
+fn would_reach_does_not_change_state() {
+    let mut t = tracker();
+    let a = ip("192.0.2.1");
+    for i in 0..4 {
+        t.record(a, at(i));
+    }
+    assert!(t.would_reach(a, at(4)));
+    assert_eq!(t.len(), 1);
+    // 見ただけなので、実際の record でも 5 回目で初めて到達する。
+    assert!(t.record(a, at(4)));
+}
+
+#[test]
+fn would_reach_ignores_records_outside_window() {
+    let mut t = tracker();
+    let a = ip("192.0.2.1");
+    for i in 0..4 {
+        t.record(a, at(i));
+    }
+    assert!(!t.would_reach(a, at(100)));
+    assert!(!t.would_reach(ip("192.0.2.2"), at(4)));
+}

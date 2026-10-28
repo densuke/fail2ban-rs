@@ -31,6 +31,7 @@ fn default_config() -> Config {
             journalctl_path: PathBuf::from("/usr/bin/journalctl"),
         },
         notify: NotifyConfig::default(),
+        http: None,
     }
 }
 
