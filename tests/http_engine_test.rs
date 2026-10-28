@@ -400,3 +400,39 @@ fn bans_after_the_end_count_toward_recidive() {
     let times: Vec<_> = r.bans.borrow().iter().map(|(_, d)| *d).collect();
     assert_eq!(times, vec![secs(300), secs(300), secs(86400)]);
 }
+
+#[test]
+fn rule_bantime_is_used_for_each_rule() {
+    let mut r = rig(
+        "[http.badpath]\nbantime = \"1d\"\n[http.notfound]\nmaxretry = 2\nbantime = \"10m\"\n",
+        "",
+    );
+    let bad = hit(&mut r, "192.0.2.30", "/.env", 404, 0);
+    assert!(matches!(
+        bad,
+        HttpOutcome::Banned { rule: HttpRule::Badpath, bantime, long: false, .. } if bantime == secs(86400)
+    ));
+    hit(&mut r, "192.0.2.31", "/a", 404, 0);
+    let nf = hit(&mut r, "192.0.2.31", "/b", 404, 1);
+    assert!(matches!(
+        nf,
+        HttpOutcome::Banned { rule: HttpRule::Notfound, bantime, long: false, .. } if bantime == secs(600)
+    ));
+    assert_eq!(
+        *r.bans.borrow(),
+        vec![
+            (ip("192.0.2.30"), secs(86400)),
+            (ip("192.0.2.31"), secs(600))
+        ]
+    );
+}
+
+#[test]
+fn log_rule_would_ban_reports_rule_bantime() {
+    let mut r = rig("[http.badpath]\nmode = \"log\"\nbantime = \"1d\"\n", "");
+    let out = hit(&mut r, "192.0.2.32", "/.env", 200, 0);
+    assert!(matches!(
+        out,
+        HttpOutcome::WouldBan { bantime, .. } if bantime == secs(86400)
+    ));
+}

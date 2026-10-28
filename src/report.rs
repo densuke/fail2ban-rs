@@ -55,8 +55,9 @@ fn recidive_text(recidive: &Option<RecidiveConfig>) -> String {
 pub fn http_start_line(http: &HttpConfig) -> String {
     let badpath = if http.badpath.enabled {
         format!(
-            "{}(+{} extra)",
+            "{}/{}s(+{} extra)",
             mode_name(http.badpath.mode),
+            http.badpath.bantime.as_secs(),
             http.badpath.extra.len()
         )
     } else {
@@ -64,8 +65,9 @@ pub fn http_start_line(http: &HttpConfig) -> String {
     };
     let notfound = if http.notfound.enabled {
         format!(
-            "{}/{}/{}s",
+            "{}/{}s/{}/{}s",
             mode_name(http.notfound.mode),
+            http.notfound.bantime.as_secs(),
             http.notfound.maxretry,
             http.notfound.findtime.as_secs()
         )

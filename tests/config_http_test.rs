@@ -25,6 +25,7 @@ fn empty_http_section_gets_defaults() {
         BadpathConfig {
             enabled: true,
             mode: Mode::Nft,
+            bantime: secs(300),
             extra: vec![]
         }
     );
@@ -33,6 +34,7 @@ fn empty_http_section_gets_defaults() {
         NotfoundConfig {
             enabled: true,
             mode: Mode::Nft,
+            bantime: secs(300),
             maxretry: 20,
             findtime: secs(600)
         }
@@ -123,4 +125,42 @@ fn badpath_can_be_disabled() {
 fn unknown_http_keys_are_rejected() {
     assert!(parse_config("[http]\nfoo = 1").is_err());
     assert!(parse_config("[http.badpath]\nfoo = 1").is_err());
+}
+
+#[test]
+fn rule_bantime_defaults_to_http_bantime() {
+    let http = parse_config("[http]\nbantime = \"10m\"")
+        .unwrap()
+        .http
+        .unwrap();
+    assert_eq!(http.badpath.bantime, secs(600));
+    assert_eq!(http.notfound.bantime, secs(600));
+}
+
+#[test]
+fn rule_bantime_overrides_http_bantime() {
+    let text = "[http.badpath]\nbantime = \"1d\"\n[http.notfound]\nbantime = \"1h\"";
+    let http = parse_config(text).unwrap().http.unwrap();
+    assert_eq!(http.badpath.bantime, secs(86400));
+    assert_eq!(http.notfound.bantime, secs(3600));
+    assert_eq!(http.bantime, secs(300));
+}
+
+#[test]
+fn rule_bantime_longer_than_recidive_is_rejected() {
+    for (text, key) in [
+        (
+            "[http.badpath]\nbantime = \"2d\"\n[http.recidive]",
+            "http.badpath.bantime",
+        ),
+        (
+            "[http.notfound]\nbantime = \"2d\"\n[http.recidive]",
+            "http.notfound.bantime",
+        ),
+    ] {
+        let err = parse_config(text).unwrap_err().to_string();
+        assert!(err.contains(key), "{err}");
+    }
+    let ok = "[http.badpath]\nbantime = \"1d\"\n[http.recidive]";
+    assert!(parse_config(ok).is_ok());
 }

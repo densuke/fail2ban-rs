@@ -33,6 +33,8 @@ pub struct BadpathConfig {
     pub enabled: bool,
     /// 省略時は全体の `mode` を解決した値。
     pub mode: Mode,
+    /// 省略時は `[http]` の `bantime`。
+    pub bantime: Duration,
     /// 組み込みに足す正規表現。
     pub extra: Vec<String>,
 }
@@ -42,6 +44,8 @@ pub struct BadpathConfig {
 pub struct NotfoundConfig {
     pub enabled: bool,
     pub mode: Mode,
+    /// 省略時は `[http]` の `bantime`。
+    pub bantime: Duration,
     pub maxretry: u32,
     pub findtime: Duration,
 }
@@ -62,6 +66,7 @@ pub(super) struct RawHttp {
 struct RawBadpath {
     enabled: Option<bool>,
     mode: Option<Mode>,
+    bantime: Option<RawDuration>,
     extra: Option<Vec<String>>,
 }
 
@@ -70,6 +75,7 @@ struct RawBadpath {
 struct RawNotfound {
     enabled: Option<bool>,
     mode: Option<Mode>,
+    bantime: Option<RawDuration>,
     maxretry: Option<u32>,
     findtime: Option<RawDuration>,
 }
@@ -84,14 +90,39 @@ pub(super) fn http_from_raw(raw: RawHttp, global: Mode) -> Result<HttpConfig, Co
         .recidive
         .map(|r| recidive_from_raw(&HTTP_RECIDIVE_KEYS, r, bantime))
         .transpose()?;
+    let badpath = badpath_from_raw(raw.badpath.unwrap_or_default(), global, bantime)?;
+    let notfound = notfound_from_raw(raw.notfound.unwrap_or_default(), global, bantime)?;
+    if let Some(r) = &recidive {
+        check_rule_bantime("http.badpath.bantime", badpath.bantime, r)?;
+        check_rule_bantime("http.notfound.bantime", notfound.bantime, r)?;
+    }
     Ok(HttpConfig {
         enabled: raw.enabled.unwrap_or(true),
         bantime,
         journalmatch,
-        badpath: badpath_from_raw(raw.badpath.unwrap_or_default(), global)?,
-        notfound: notfound_from_raw(raw.notfound.unwrap_or_default(), global)?,
+        badpath,
+        notfound,
         recidive,
     })
+}
+
+/// ルールの bantime が常習犯の bantime より長いと、常習犯のほうが短くなってしまう。
+fn check_rule_bantime(
+    key: &'static str,
+    bantime: Duration,
+    recidive: &RecidiveConfig,
+) -> Result<(), ConfigError> {
+    if bantime > recidive.bantime {
+        return Err(ConfigError::InvalidValue {
+            key,
+            value: format!(
+                "{}s (http.recidive.bantime の {}s 以下にする)",
+                bantime.as_secs(),
+                recidive.bantime.as_secs()
+            ),
+        });
+    }
+    Ok(())
 }
 
 /// ルールの mode を解決する。全体が nft でなければルールだけ nft にはできない。
@@ -106,7 +137,11 @@ fn resolve_mode(key: &'static str, rule: Option<Mode>, global: Mode) -> Result<M
     }
 }
 
-fn badpath_from_raw(raw: RawBadpath, global: Mode) -> Result<BadpathConfig, ConfigError> {
+fn badpath_from_raw(
+    raw: RawBadpath,
+    global: Mode,
+    jail_bantime: Duration,
+) -> Result<BadpathConfig, ConfigError> {
     let extra = raw.extra.unwrap_or_default();
     for pattern in &extra {
         build(pattern).map_err(|_| ConfigError::InvalidValue {
@@ -117,11 +152,16 @@ fn badpath_from_raw(raw: RawBadpath, global: Mode) -> Result<BadpathConfig, Conf
     Ok(BadpathConfig {
         enabled: raw.enabled.unwrap_or(true),
         mode: resolve_mode("http.badpath.mode", raw.mode, global)?,
+        bantime: duration_or("http.badpath.bantime", raw.bantime, jail_bantime)?,
         extra,
     })
 }
 
-fn notfound_from_raw(raw: RawNotfound, global: Mode) -> Result<NotfoundConfig, ConfigError> {
+fn notfound_from_raw(
+    raw: RawNotfound,
+    global: Mode,
+    jail_bantime: Duration,
+) -> Result<NotfoundConfig, ConfigError> {
     let maxretry = raw.maxretry.unwrap_or(DEFAULT_NOTFOUND_MAXRETRY);
     if maxretry == 0 {
         return Err(ConfigError::InvalidValue {
@@ -132,6 +172,7 @@ fn notfound_from_raw(raw: RawNotfound, global: Mode) -> Result<NotfoundConfig, C
     Ok(NotfoundConfig {
         enabled: raw.enabled.unwrap_or(true),
         mode: resolve_mode("http.notfound.mode", raw.mode, global)?,
+        bantime: duration_or("http.notfound.bantime", raw.bantime, jail_bantime)?,
         maxretry,
         findtime: duration_or(
             "http.notfound.findtime",

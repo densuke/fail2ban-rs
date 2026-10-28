@@ -67,6 +67,7 @@ pub enum HttpOutcome {
 struct Hit {
     rule: HttpRule,
     mode: Mode,
+    bantime: Duration,
     uri: Option<String>,
 }
 
@@ -75,11 +76,12 @@ pub struct HttpEngine<A: BanAction> {
     badpaths: BadPaths,
     badpath_enabled: bool,
     badpath_mode: Mode,
+    badpath_bantime: Duration,
     notfound_enabled: bool,
     notfound_mode: Mode,
+    notfound_bantime: Duration,
     ignore: IgnoreList,
     notfound: FailTracker,
-    bantime: Duration,
     /// 常習犯の設定と、ブロックの回数を数える tracker。無効なら `None`。
     recidive: Option<Recidive>,
     ledger: SharedLedger,
@@ -97,11 +99,12 @@ impl<A: BanAction> HttpEngine<A> {
             badpaths: BadPaths::new(&http.badpath.extra)?,
             badpath_enabled: http.badpath.enabled,
             badpath_mode: http.badpath.mode,
+            badpath_bantime: http.badpath.bantime,
             notfound_enabled: http.notfound.enabled,
             notfound_mode: http.notfound.mode,
+            notfound_bantime: http.notfound.bantime,
             ignore: IgnoreList::parse(ignoreip)?,
             notfound: FailTracker::new(http.notfound.findtime, http.notfound.maxretry),
-            bantime: http.bantime,
             recidive: http
                 .recidive
                 .clone()
@@ -136,7 +139,7 @@ impl<A: BanAction> HttpEngine<A> {
             Mode::Log => Ok(HttpOutcome::WouldBan {
                 ip: access.ip,
                 rule: hit.rule,
-                bantime: self.bantime,
+                bantime: hit.bantime,
                 uri: hit.uri,
             }),
             Mode::Nft => self.ban(access.ip, entry.time, hit),
@@ -151,6 +154,7 @@ impl<A: BanAction> HttpEngine<A> {
         let badpath = || Hit {
             rule: HttpRule::Badpath,
             mode: self.badpath_mode,
+            bantime: self.badpath_bantime,
             uri: Some(access.uri.clone()),
         };
         if is_badpath && self.badpath_mode == Mode::Nft {
@@ -162,6 +166,7 @@ impl<A: BanAction> HttpEngine<A> {
             return Some(Hit {
                 rule: HttpRule::Notfound,
                 mode: self.notfound_mode,
+                bantime: self.notfound_bantime,
                 uri: None,
             });
         }
@@ -176,7 +181,7 @@ impl<A: BanAction> HttpEngine<A> {
             self.recidive.as_mut(),
             ip,
             at,
-            self.bantime,
+            hit.bantime,
         )?;
         Ok(match step {
             BanStep::AlreadyBanned(until) => HttpOutcome::AlreadyBanned {

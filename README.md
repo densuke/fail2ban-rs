@@ -131,15 +131,17 @@ www.example.com {
 
 ```toml
 [http]
-bantime = "5m"                  # 2 つのルール共通の短いブロック。既定は 5 分
+bantime = "5m"                  # 2 つのルールの既定のブロック。既定は 5 分
 
 [http.badpath]                  # 既知のパスのルール。書かなくても有効
 # mode = "log"                  # 省略時は全体の mode
+# bantime = "1d"                # 省略時は [http] の bantime
 # extra = ['^/\.svn/']          # 組み込みの一覧に足す正規表現
 
 [http.notfound]                 # 404 のルール。書かなくても有効
 maxretry = 20                   # 既定は 20
 findtime = "10m"                # 既定は 10 分
+# bantime = "5m"                # 省略時は [http] の bantime
 
 [http.recidive]                 # 書けば有効。既定は 3 回 / 1d / 1d
 maxbans = 3
@@ -148,13 +150,14 @@ maxbans = 3
 - **badpath (既知のパス)**: `.env` や `.git`、`wp-login.php`、`.zip` で終わるパスなど、正規でないパスに 1 回アクセスしたらブロックします。ステータスは見ません。クエリは値を見ず、キー (`rest_route` など) だけを見ます。`extra` は `%xx` を解いて小文字にしたパス全体に当てる正規表現です。
 - **notfound (404)**: findtime の間に 404 を maxretry 回出した IP をブロックします。badpath に当たった 404 の行の扱いは、badpath の mode で変わります。badpath が `nft` なら、その行は badpath が先にブロックし、notfound には数えません (1 行で 2 回ブロックしません)。badpath が `log` なら、その行はブロックされないので notfound にも数えます。その行で notfound が閾値に達したときは、実際のブロックが勝ち、`would ban` ではなく notfound の `ban` になります。
 - **recidive**: HTTP の jail でのブロックを、2 つのルール合わせて IP ごとに数えます。findtime の間に maxbans 回目になったら、その回は recidive の bantime (既定 1 日) でブロックします。sshd のブロックとは別に数えます。
+- **ルールごとの `bantime`**: 省略すると `[http]` の `bantime` になります。recidive を有効にしているときは、recidive の bantime 以下にします (長くすると起動しません)。ルールの bantime が recidive の bantime と同じなら、recidive に当たった回も長さは変わりませんが、`(recidive)` の行になり `{kind}` は `長期` になります。
 - **ルールごとの `mode`**: `log` か `nft` です。`log` のルールは `would ban` を出すだけで、recidive の回数には足しません。全体が `log` のときにルールだけ `nft` にはできません。新しいルールを試すときは `log` にします。ルールは `enabled = false` で止められます。
 - 長いブロックは、別のルールや別の jail の短いブロックで短くなりません。プロセスの中で IP ごとに「ブロックが終わる時刻」を持ち、それより早く終わるブロックは nft に流しません。流さなかったときは `ban` ではなく `already banned <ip> until <UNIX 秒> jail=<jail> rule=<rule>` の行を出します。この行は通知せず、recidive にも数えません。nft への追加に失敗したブロックも recidive に数えず、「ブロックが終わる時刻」の表は元に戻します。
 
 ### 出力と数え方
 
 ```text
-start http bantime=300s badpath=nft(+0 extra) notfound=nft/20/600s recidive=3/86400s/86400s
+start http bantime=300s badpath=nft/300s(+0 extra) notfound=nft/300s/20/600s recidive=3/86400s/86400s
 ban 203.0.113.7 for 300s jail=http rule=badpath uri=/.env
 ban 203.0.113.7 for 86400s (recidive) jail=http rule=notfound
 would ban 203.0.113.8 for 300s jail=http rule=notfound

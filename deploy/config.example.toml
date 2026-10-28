@@ -75,7 +75,7 @@ on_ban = []
 # sshd と同時に動き、nft の表は共有する。ignoreip も全 jail で共有する。
 # [http]
 # enabled = true      # 既定は true (セクションを書けば有効)
-# bantime = "5m"      # 2 つのルール共通の短いブロック。既定は "5m"
+# bantime = "5m"      # 2 つのルールの既定のブロック。既定は "5m"
 # journalmatch = ["_SYSTEMD_UNIT=caddy.service"]   # 既定値
 #
 # # 既知のパスのルール。正規でないパス (.env、.git、wp-login.php、.zip で終わるパスなど) に
@@ -83,6 +83,7 @@ on_ban = []
 # [http.badpath]
 # enabled = true
 # mode = "log"                # "log" か "nft"。省略時は全体の mode。全体が log のときに nft にはできない
+# bantime = "1d"              # 省略時は [http] の bantime。recidive の bantime 以下にする
 # extra = ['^/\.svn/']        # 組み込みの一覧に足す正規表現 (%xx を解いて小文字にしたパスに当てる)
 #
 # # 404 のルール。findtime の間に 404 を maxretry 回出したらブロックする。書かなくても有効。
@@ -90,6 +91,7 @@ on_ban = []
 # enabled = true
 # maxretry = 20               # 既定は 20
 # findtime = "10m"            # 既定は "10m"
+# bantime = "5m"              # 省略時は [http] の bantime
 # mode = "log"
 #
 # # 常習犯の長期ブロック。HTTP の jail でのブロックを 2 つのルール合わせて数える。
