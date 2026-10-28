@@ -6,10 +6,11 @@ use std::time::{Duration, SystemTime};
 use crate::action::{BanAction, LogAction, NftAction};
 use crate::config::{Config, Mode};
 use crate::engine::{Engine, Outcome};
-use crate::http_engine::{HttpEngine, HttpOutcome};
+use crate::http_engine::HttpEngine;
 use crate::journal::{LogEntry, spawn_reader};
 use crate::ledger::{BanLedger, SharedLedger};
 use crate::notify::{render_command, spawn_notify};
+use crate::notify_args::{NotifyArgs, http_notify, sshd_notify};
 use crate::report::{http_outcome_line, http_start_line, sshd_already_banned_line};
 
 use std::cell::RefCell;
@@ -74,19 +75,18 @@ fn sshd_start_line(config: &Config) -> String {
 }
 
 /// 通知コマンドを起動する。`on_ban` が空なら何もしない。
-fn notify_ban(
-    config: &Config,
-    ip: std::net::IpAddr,
-    bantime: Duration,
-    long: bool,
-    jail: &str,
-    rule: &str,
-) {
+fn notify_ban(config: &Config, args: &NotifyArgs) {
     if config.notify.on_ban.is_empty() {
         return;
     }
-    let kind = if long { "長期" } else { "通常" };
-    let argv = render_command(&config.notify.on_ban, ip, bantime, kind, jail, rule);
+    let argv = render_command(
+        &config.notify.on_ban,
+        args.ip,
+        args.bantime,
+        args.kind,
+        args.jail,
+        args.rule,
+    );
     spawn_notify(&argv);
 }
 
@@ -219,7 +219,9 @@ fn handle_sshd<A: BanAction>(config: &Config, engine: &mut Engine<A>, entry: &Lo
                 println!("ban {ip} for {}s{note}", bantime.as_secs());
             }
             // 通知は mode に関係なく行う (log モードでも動作を確かめられる)。
-            notify_ban(config, ip, bantime, long, "sshd", "sshd");
+            if let Some(args) = sshd_notify(&outcome, bantime) {
+                notify_ban(config, &args);
+            }
         }
         Ok(Outcome::AlreadyBanned(ip, until)) => {
             println!("{}", sshd_already_banned_line(ip, until));
@@ -241,22 +243,8 @@ fn handle_http<A: BanAction>(config: &Config, engine: &mut HttpEngine<A>, entry:
     if let Some(line) = http_outcome_line(&outcome) {
         println!("{line}");
     }
-    // 通知は mode に関係なく行う。AlreadyBanned では通知しない。
-    match &outcome {
-        HttpOutcome::Banned {
-            ip,
-            rule,
-            bantime,
-            long,
-            ..
-        } => {
-            notify_ban(config, *ip, *bantime, *long, "http", rule.as_str());
-        }
-        HttpOutcome::WouldBan {
-            ip, rule, bantime, ..
-        } => {
-            notify_ban(config, *ip, *bantime, false, "http", rule.as_str());
-        }
-        _ => {}
+    // 通知は mode に関係なく行う。
+    if let Some(args) = http_notify(&outcome) {
+        notify_ban(config, &args);
     }
 }

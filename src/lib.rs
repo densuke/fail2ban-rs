@@ -14,5 +14,6 @@ pub mod ip;
 pub mod journal;
 pub mod ledger;
 pub mod notify;
+pub mod notify_args;
 pub mod report;
 pub mod tracker;
