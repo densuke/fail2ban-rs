@@ -98,6 +98,78 @@ on_ban = ["/usr/sbin/runuser", "-u", "densuke", "--", "/home/densuke/.local/bin/
 
 fail2ban-rs は root で動くので、ユーザーのバイナリは上のように `runuser` 経由で呼ぶ。
 
+## HTTP (Caddy) の jail
+
+Caddy のアクセスログ (JSON) を journal から読み、穴探しのアクセスをブロックします。`[http]` を書くと有効になり、書かなければ無効です。sshd の jail とは同時に動き、それぞれ別の journalctl を読みます。nft の表・set は 1 つを共有します。
+
+### Caddy のログを journal に出す
+
+Caddy のログを標準出力に出せば、systemd が journal に入れます。サイトごとに `import` する snippet の例です。
+
+```caddyfile
+(log) {
+	log {
+		output stdout
+		format json
+	}
+}
+
+example.com {
+	import log
+	respond "ok"
+}
+
+www.example.com {
+	import log
+	respond "ok"
+}
+```
+
+読む行は `logger` が `http.log.access` で始まる JSON だけです。接続元は `request.client_ip` (無ければ `remote_ip`) で、`X-Forwarded-For` などのヘッダは見ません。`trusted_proxies` を設定していないことを前提にしています。journal の既定の絞り込みは `_SYSTEMD_UNIT=caddy.service` です。
+
+### 設定
+
+```toml
+[http]
+bantime = "5m"                  # 2 つのルール共通の短いブロック。既定は 5 分
+
+[http.badpath]                  # 既知のパスのルール。書かなくても有効
+# mode = "log"                  # 省略時は全体の mode
+# extra = ['^/\.svn/']          # 組み込みの一覧に足す正規表現
+
+[http.notfound]                 # 404 のルール。書かなくても有効
+maxretry = 20                   # 既定は 20
+findtime = "10m"                # 既定は 10 分
+
+[http.recidive]                 # 書けば有効。既定は 3 回 / 1d / 1d
+maxbans = 3
+```
+
+- **badpath (既知のパス)**: `.env` や `.git`、`wp-login.php`、`.zip` で終わるパスなど、正規でないパスに 1 回アクセスしたらブロックします。ステータスは見ません。クエリは値を見ず、キー (`rest_route` など) だけを見ます。`extra` は `%xx` を解いて小文字にしたパス全体に当てる正規表現です。
+- **notfound (404)**: findtime の間に 404 を maxretry 回出した IP をブロックします。badpath に当たった行が 404 なら、こちらにも数えます。1 行で 2 回はブロックしません (badpath が先)。
+- **recidive**: HTTP の jail でのブロックを、2 つのルール合わせて IP ごとに数えます。findtime の間に maxbans 回目になったら、その回は recidive の bantime (既定 1 日) でブロックします。sshd のブロックとは別に数えます。
+- **ルールごとの `mode`**: `log` か `nft` です。`log` のルールは `would ban` を出すだけで、recidive の回数には足しません。全体が `log` のときにルールだけ `nft` にはできません。新しいルールを試すときは `log` にします。ルールは `enabled = false` で止められます。
+- badpath が `log` でも、badpath に当たった 404 の行は notfound に数えます。その行で notfound が閾値に達したときは、実際のブロックが勝ちます。
+- 長いブロックは、別のルールや別の jail の短いブロックで短くなりません。プロセスの中で IP ごとに「ブロックが終わる時刻」を持ち、それより早く終わるブロックは nft に流しません。流さなかったときは `ban` ではなく `already banned <ip> until <UNIX 秒> jail=<jail> rule=<rule>` の行を出します。この行は通知せず、recidive にも数えません。nft への追加に失敗したブロックも recidive に数えず、「ブロックが終わる時刻」の表は元に戻します。
+
+### 出力と数え方
+
+```text
+start http bantime=300s badpath=nft(+0 extra) notfound=nft/20/600s recidive=3/86400s/86400s
+ban 203.0.113.7 for 300s jail=http rule=badpath uri=/.env
+ban 203.0.113.7 for 86400s (recidive) jail=http rule=notfound
+would ban 203.0.113.8 for 300s jail=http rule=notfound
+already banned 203.0.113.7 until 1793000000 jail=http rule=badpath
+```
+
+HTTP の行には `jail=` と `rule=` が付きます。badpath の行には当たった URI が `uri=` で付きます (制御文字や空白はエスケープし、200 文字で切ります)。sshd の `ban` の行の形は変わりません。効果は journal を数えて測れます。
+
+```bash
+journalctl -u fail2ban-rs -o cat | grep 'jail=http' | grep -c '^ban '
+```
+
+`already banned` の行は `ban` で始まらないので、`^ban ` で数えれば件数は膨らみません。`on_ban` の通知コマンドの `{jail}` と `{rule}` でも、どの jail のどのルールで捕まったかを渡せます。
+
 ## 判定だけを試す: `test-filter`
 
 手元のログに対して sshd のフィルタを当て、判定を確かめられます。1 行 1 メッセージを読み、標準入力 (`-` か省略) か指定したファイルから読みます。
@@ -142,7 +214,7 @@ sudo nft delete table inet fail2ban_rs
 - MLF (複数行の関連付け)、ddos モード、aggressive モード。
 - クライアントとサーバーのソケット通信、DNS 名の解決、ファイルの tail。
 - pam の複数ユーザーの計数、bantime の段階的な延長 (常習犯の 1 段階だけの長期ブロックは `[sshd.recidive]` にあります)。
-- sshd 以外のジェイル。
+- sshd と Caddy 以外のジェイル。
 - ポート単位のブロック。ブロックした IP からの通信はすべて落とします。
 
 ## 互換性

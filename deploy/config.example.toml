@@ -69,3 +69,32 @@ journalctl_path = "/usr/bin/journalctl"
 #   "--level", "warning", "--title", "fail2ban-rs: {ip} をブロック", "--description", "{bantime} 秒",
 # ]
 on_ban = []
+
+# HTTP (Caddy) の jail。Caddy のアクセスログ (JSON) を journal から読む。
+# 既定では書かない (= 無効)。使うときは下のコメントを外す。
+# sshd と同時に動き、nft の表は共有する。ignoreip も全 jail で共有する。
+# [http]
+# enabled = true      # 既定は true (セクションを書けば有効)
+# bantime = "5m"      # 2 つのルール共通の短いブロック。既定は "5m"
+# journalmatch = ["_SYSTEMD_UNIT=caddy.service"]   # 既定値
+#
+# # 既知のパスのルール。正規でないパス (.env、.git、wp-login.php、.zip で終わるパスなど) に
+# # 1 回アクセスしたらブロックする。書かなくても有効。
+# [http.badpath]
+# enabled = true
+# mode = "log"                # "log" か "nft"。省略時は全体の mode。全体が log のときに nft にはできない
+# extra = ['^/\.svn/']        # 組み込みの一覧に足す正規表現 (%xx を解いて小文字にしたパスに当てる)
+#
+# # 404 のルール。findtime の間に 404 を maxretry 回出したらブロックする。書かなくても有効。
+# [http.notfound]
+# enabled = true
+# maxretry = 20               # 既定は 20
+# findtime = "10m"            # 既定は "10m"
+# mode = "log"
+#
+# # 常習犯の長期ブロック。HTTP の jail でのブロックを 2 つのルール合わせて数える。
+# # 書けば有効。中身の既定は 3 回 / "1d" / "1d"。sshd のブロックとは別に数える。
+# [http.recidive]
+# maxbans = 3
+# findtime = "1d"
+# bantime = "1d"
