@@ -7,6 +7,7 @@ pub mod config;
 pub mod duration;
 pub mod engine;
 pub mod filter;
+pub mod http_engine;
 pub mod ip;
 pub mod journal;
 pub mod ledger;
