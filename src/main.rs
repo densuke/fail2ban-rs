@@ -164,7 +164,14 @@ fn run_with<A: BanAction>(config: &Config, action: A) -> Result<(), String> {
                         // 通知は mode に関係なく行う (log モードでも動作を確かめられる)。
                         if !config.notify.on_ban.is_empty() {
                             let kind = if long { "長期" } else { "通常" };
-                            let argv = render_command(&config.notify.on_ban, ip, bantime, kind);
+                            let argv = render_command(
+                                &config.notify.on_ban,
+                                ip,
+                                bantime,
+                                kind,
+                                "sshd",
+                                "sshd",
+                            );
                             spawn_notify(&argv);
                         }
                     }

@@ -5,13 +5,16 @@ use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-/// 雛形の各要素の `{ip}`、`{bantime}` (秒の整数)、`{kind}` (ブロックの種類) を置き換える。
+/// 雛形の各要素の `{ip}`、`{bantime}` (秒の整数)、`{kind}` (ブロックの種類)、
+/// `{jail}` (ブロックした jail 名)、`{rule}` (ブロックの理由になった規則) を置き換える。
 /// 他の `{...}` はそのまま。
 pub fn render_command(
     template: &[String],
     ip: IpAddr,
     bantime: Duration,
     kind: &str,
+    jail: &str,
+    rule: &str,
 ) -> Vec<String> {
     let ip = ip.to_canonical().to_string();
     let secs = bantime.as_secs().to_string();
@@ -21,6 +24,8 @@ pub fn render_command(
             arg.replace("{ip}", &ip)
                 .replace("{bantime}", &secs)
                 .replace("{kind}", kind)
+                .replace("{jail}", jail)
+                .replace("{rule}", rule)
         })
         .collect()
 }

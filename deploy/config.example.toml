@@ -61,6 +61,8 @@ journalctl_path = "/usr/bin/journalctl"
 # シェルを通さず、引数の配列としてそのまま実行する。先頭の要素は絶対パスにすること。
 # 各要素の中の {ip} はブロックした IP、{bantime} は実際に使った bantime の秒数 (整数)、
 # {kind} はブロックの種類 (通常のブロックは "通常"、recidive による長期ブロックは "長期") に置き換える。
+# {jail} はブロックした jail の名前 ("sshd" / "http")、{rule} はブロックの理由になった規則
+# ("sshd" / "badpath" / "notfound") に置き換える。
 # fail2ban-rs は root で動くので、ユーザーのバイナリは runuser 経由で呼ぶ。
 # on_ban = [
 #   "/usr/sbin/runuser", "-u", "densuke", "--", "/home/densuke/.local/bin/discord-send-notifier",
