@@ -111,6 +111,11 @@ impl<A: BanAction> HttpEngine<A> {
         })
     }
 
+    /// ブロックの動作を準備する。設定の検証が済んだ後に呼ぶ。
+    pub fn start(&self) -> Result<(), ActionError> {
+        self.action.start()
+    }
+
     /// 1 行を処理する。ブロックに失敗したら `Err` を返す。
     pub fn handle(&mut self, entry: &LogEntry) -> Result<HttpOutcome, ActionError> {
         let Some(access) = parse_access(&entry.message) else {

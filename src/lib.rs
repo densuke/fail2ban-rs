@@ -5,6 +5,7 @@
 pub mod action;
 pub mod ban_step;
 pub mod config;
+pub mod daemon;
 pub mod duration;
 pub mod engine;
 pub mod filter;
@@ -13,4 +14,5 @@ pub mod ip;
 pub mod journal;
 pub mod ledger;
 pub mod notify;
+pub mod report;
 pub mod tracker;
