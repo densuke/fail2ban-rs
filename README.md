@@ -184,6 +184,8 @@ Caddy の JSON のアクセスログを試すときは `--jail http` を付け�
 journalctl -u caddy -o cat | fail2ban-rs test-filter --jail http
 ```
 
+`test-filter --jail http` は組み込みの一覧だけで判定します (`extra` は使いません)。404 の連続 (notfound) の時間枠も適用しません。
+
 ## 手で解除する・撤去する
 
 ブロックは nft の timeout 付き set に入るので、bantime が過ぎれば自動で解除されます。急いで解除したいときは、要素を消します。

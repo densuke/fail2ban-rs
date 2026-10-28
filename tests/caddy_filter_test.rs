@@ -113,6 +113,7 @@ fn builtin_list_matches() {
         "/dump.sql",
         "/db.bak",
         "/?rest_route=/",
+        "/?rest%5Froute=/",
         "/?phpinfo=1",
         "/%2E%65nv",
         "/a.php?x=1&REST_ROUTE=/",

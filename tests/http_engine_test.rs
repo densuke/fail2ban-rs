@@ -361,3 +361,42 @@ fn failed_ban_is_not_counted_toward_recidive() {
     let again = hit(&mut r, "192.0.2.13", "/.env", 404, 800);
     assert!(matches!(again, HttpOutcome::Banned { long: true, .. }));
 }
+
+fn is_already(out: &HttpOutcome) -> bool {
+    matches!(out, HttpOutcome::AlreadyBanned { .. })
+}
+
+#[test]
+fn badpath_scan_during_a_ban_is_one_ban() {
+    let mut r = rig(RECIDIVE, "");
+    let a = "192.0.2.50";
+    let first = hit(&mut r, a, "/.env", 404, 0);
+    assert!(matches!(first, HttpOutcome::Banned { long: false, .. }));
+    // 掛かったブロックが続いている間の行は、延ばさず、nft にも送らず、常習犯にも数えない。
+    for t in [1, 2] {
+        let out = hit(&mut r, a, "/.git/config", 404, t);
+        assert!(is_already(&out), "t+{t}: {out:?}");
+    }
+    assert_eq!(r.bans.borrow().len(), 1);
+    // 終わりは最初のブロックのまま (延びていない)。
+    assert_eq!(
+        r.ledger.borrow().end_of(ip(a)),
+        Some(entry(String::new(), 0).time + secs(300))
+    );
+}
+
+#[test]
+fn bans_after_the_end_count_toward_recidive() {
+    let mut r = rig(RECIDIVE, "");
+    let a = "192.0.2.51";
+    for t in [0, 1, 2] {
+        hit(&mut r, a, "/.env", 404, t);
+    }
+    let second = hit(&mut r, a, "/.env", 404, 301);
+    assert!(matches!(second, HttpOutcome::Banned { long: false, .. }));
+    assert!(is_already(&hit(&mut r, a, "/.env", 404, 302)));
+    let third = hit(&mut r, a, "/.env", 404, 602);
+    assert!(matches!(third, HttpOutcome::Banned { long: true, .. }));
+    let times: Vec<_> = r.bans.borrow().iter().map(|(_, d)| *d).collect();
+    assert_eq!(times, vec![secs(300), secs(300), secs(86400)]);
+}

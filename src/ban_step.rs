@@ -20,7 +20,7 @@ pub enum BanStep {
     Banned { bantime: Duration, long: bool },
 }
 
-/// 常習犯の判定、表の確認、ブロック、常習犯の記録を順に行う。
+/// 常習犯の判定、表の確認 (続いているブロックがあれば何もしない)、ブロック、常習犯の記録を順に行う。
 ///
 /// 表に載せたあとでブロックに失敗したら表を元に戻して `Err` を返す。
 /// 常習犯の回数には、ブロックが掛かったものだけを数える。
@@ -38,11 +38,14 @@ pub fn ban_step<A: BanAction>(
         .filter(|(_, bans)| bans.would_reach(ip, at))
         .map(|(config, _)| config.bantime);
     let bantime = long.unwrap_or(base);
-    // 終わりがもっと先のブロックがあれば何もしない。常習犯の回数にも数えない。
+    // まだ続いているブロックがあれば何もしない。延ばさず、常習犯の回数にも数えない。
     let mut previous_end = None;
     if let Some(ledger) = ledger {
         let mut ledger = ledger.borrow_mut();
         previous_end = ledger.end_of(ip);
+        if let Some(end) = previous_end.filter(|end| *end > at) {
+            return Ok(BanStep::AlreadyBanned(end));
+        }
         if let Err(until) = ledger.admit(ip, at, bantime) {
             return Ok(BanStep::AlreadyBanned(until));
         }

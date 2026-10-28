@@ -398,3 +398,15 @@ fn failed_ban_is_not_counted_toward_recidive() {
     assert_eq!(burst(&mut e, IP, 60 * MIN), Outcome::LongBanned(ip));
     assert_eq!(ban_times(&bans), secs(&[300, 300, 86400]));
 }
+
+#[test]
+fn threshold_during_a_running_ban_does_not_extend_it() {
+    let (mut e, bans, ledger) = ledger_engine();
+    let ip: IpAddr = IP.parse().unwrap();
+    assert_eq!(burst(&mut e, IP, 0), Outcome::Banned(ip));
+    let end = ledger.borrow().end_of(ip).unwrap();
+    // ブロックの途中で再び閾値に達しても、延ばさず、送らない。
+    assert_eq!(burst(&mut e, IP, 60), Outcome::AlreadyBanned(ip, end));
+    assert_eq!(ledger.borrow().end_of(ip), Some(end));
+    assert_eq!(ban_times(&bans), secs(&[300]));
+}
