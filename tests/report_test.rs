@@ -41,7 +41,7 @@ fn 既定の起動の行() {
     let http = config.http.unwrap();
     assert_eq!(
         http_start_line(&http),
-        "start http bantime=300s badpath=nft(+0 extra) notfound=nft/20/600s recidive=3/86400s/86400s"
+        "start http bantime=300s badpath=nft/300s(+0 extra) notfound=nft/300s/20/600s recidive=3/86400s/86400s"
     );
 }
 
@@ -52,7 +52,7 @@ fn 無効なルールと_recidive_なしは_off() {
     let http = config.http.unwrap();
     assert_eq!(
         http_start_line(&http),
-        "start http bantime=300s badpath=nft(+0 extra) notfound=off recidive=off"
+        "start http bantime=300s badpath=nft/300s(+0 extra) notfound=off recidive=off"
     );
 }
 
@@ -65,7 +65,7 @@ fn badpath_が無効なら_off_で_log_は小文字() {
     let http = config.http.unwrap();
     assert_eq!(
         http_start_line(&http),
-        "start http bantime=300s badpath=off notfound=log/5/600s recidive=off"
+        "start http bantime=300s badpath=off notfound=log/300s/5/600s recidive=off"
     );
 }
 
@@ -159,5 +159,15 @@ fn sshd_の_already_banned_の行() {
     assert_eq!(
         sshd_already_banned_line(ip("2001:db8::1"), until),
         "already banned 2001:db8::1 until 1700086400 jail=sshd rule=sshd"
+    );
+}
+
+#[test]
+fn ルールごとの_bantime_を出す() {
+    let config = parse_config("mode = \"nft\"\n[http.badpath]\nbantime = \"1d\"\n").unwrap();
+    let http = config.http.unwrap();
+    assert_eq!(
+        http_start_line(&http),
+        "start http bantime=300s badpath=nft/86400s(+0 extra) notfound=nft/300s/20/600s recidive=off"
     );
 }
