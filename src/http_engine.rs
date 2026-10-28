@@ -4,7 +4,8 @@ use std::net::IpAddr;
 use std::time::{Duration, SystemTime};
 
 use crate::action::{ActionError, BanAction};
-use crate::config::{HttpConfig, Mode, RecidiveConfig};
+use crate::ban_step::{BanStep, Recidive, ban_step};
+use crate::config::{HttpConfig, Mode};
 use crate::engine::EngineError;
 use crate::filter::{AccessEntry, BadPaths, parse_access};
 use crate::ip::IgnoreList;
@@ -80,7 +81,7 @@ pub struct HttpEngine<A: BanAction> {
     notfound: FailTracker,
     bantime: Duration,
     /// 常習犯の設定と、ブロックの回数を数える tracker。無効なら `None`。
-    recidive: Option<(RecidiveConfig, FailTracker)>,
+    recidive: Option<Recidive>,
     ledger: SharedLedger,
     action: A,
 }
@@ -137,59 +138,54 @@ impl<A: BanAction> HttpEngine<A> {
         }
     }
 
-    /// 閾値に達したルールを返す。badpath は即達し、404 の tracker には足さない。
+    /// 閾値に達したルールを返す。
+    ///
+    /// badpath が nft なら即達し、404 の tracker には足さない。badpath が log のときは
+    /// ブロックされないので、404 の行は notfound にも数え、達したらそちらを優先する。
     fn judge(&mut self, access: &AccessEntry, at: SystemTime, is_badpath: bool) -> Option<Hit> {
-        if is_badpath {
+        let badpath = || Hit {
+            rule: HttpRule::Badpath,
+            mode: self.badpath_mode,
+            uri: Some(access.uri.clone()),
+        };
+        if is_badpath && self.badpath_mode == Mode::Nft {
+            return Some(badpath());
+        }
+        let counts_as_notfound = self.notfound_enabled && access.status == 404;
+        let reached = counts_as_notfound && self.notfound.record(access.ip, at);
+        if reached {
             return Some(Hit {
-                rule: HttpRule::Badpath,
-                mode: self.badpath_mode,
-                uri: Some(access.uri.clone()),
+                rule: HttpRule::Notfound,
+                mode: self.notfound_mode,
+                uri: None,
             });
         }
-        self.notfound.record(access.ip, at).then_some(Hit {
-            rule: HttpRule::Notfound,
-            mode: self.notfound_mode,
-            uri: None,
-        })
+        is_badpath.then(badpath)
     }
 
-    /// ledger の確認、ブロック、recidive の記録を順に行う。
+    /// 共通の手順でブロックする。
     fn ban(&mut self, ip: IpAddr, at: SystemTime, hit: Hit) -> Result<HttpOutcome, ActionError> {
-        // maxbans 回目のブロックなら長期ブロックにする (記録は tracker 側で消える)。
-        let long = self
-            .recidive
-            .as_ref()
-            .filter(|(_, bans)| bans.would_reach(ip, at))
-            .map(|(recidive, _)| recidive.bantime);
-        let bantime = long.unwrap_or(self.bantime);
-        // 終わりがもっと先のブロックがあれば何もしない。常習犯の回数にも数えない。
-        let previous_end = {
-            let mut ledger = self.ledger.borrow_mut();
-            let previous_end = ledger.end_of(ip);
-            if let Err(until) = ledger.admit(ip, at, bantime) {
-                return Ok(HttpOutcome::AlreadyBanned {
-                    ip,
-                    rule: hit.rule,
-                    until,
-                });
-            }
-            previous_end
-        };
-        if let Err(e) = self.action.ban(ip, bantime) {
-            // ブロックが掛からなかったので、表の終わる時刻も元に戻す。
-            self.ledger.borrow_mut().restore(ip, previous_end);
-            return Err(e);
-        }
-        // 掛かったブロックだけを常習犯の回数に数える。
-        if let Some((_, bans)) = self.recidive.as_mut() {
-            bans.record(ip, at);
-        }
-        Ok(HttpOutcome::Banned {
+        let step = ban_step(
+            &self.action,
+            Some(&self.ledger),
+            self.recidive.as_mut(),
             ip,
-            rule: hit.rule,
-            bantime,
-            long: long.is_some(),
-            uri: hit.uri,
+            at,
+            self.bantime,
+        )?;
+        Ok(match step {
+            BanStep::AlreadyBanned(until) => HttpOutcome::AlreadyBanned {
+                ip,
+                rule: hit.rule,
+                until,
+            },
+            BanStep::Banned { bantime, long } => HttpOutcome::Banned {
+                ip,
+                rule: hit.rule,
+                bantime,
+                long,
+                uri: hit.uri,
+            },
         })
     }
 

@@ -157,12 +157,61 @@ fn notfound_bans_on_twentieth_within_window() {
 fn notfound_window_restarts_after_gap() {
     let mut r = rig("", "");
     for i in 0..19 {
-        hit(&mut r, "192.0.2.4", &format!("/x{i}"), 404, i * 40);
+        hit(&mut r, "192.0.2.4", &format!("/x{i}"), 404, i);
     }
-    // 40 秒おきに 19 本。最初の方は 10 分の窓から外れ、20 本目でも達しない。
-    let out = hit(&mut r, "192.0.2.4", "/x19", 404, 19 * 40);
+    // 窓 (600 秒) を超えて間が空いたので、数え直しになる。
+    let out = hit(&mut r, "192.0.2.4", "/x19", 404, 19 + 601);
     assert_eq!(out, HttpOutcome::Counted(ip("192.0.2.4")));
     assert!(r.bans.borrow().is_empty());
+}
+
+const LOG_BADPATH: &str = "[http.badpath]\nmode = \"log\"\n";
+
+#[test]
+fn log_badpath_404_still_counts_toward_notfound() {
+    let mut r = rig(LOG_BADPATH, "");
+    for i in 1..20 {
+        hit(&mut r, "192.0.2.14", &format!("/x{i}"), 404, i);
+    }
+    let out = hit(&mut r, "192.0.2.14", "/.env", 404, 20);
+    assert!(
+        matches!(
+            out,
+            HttpOutcome::Banned {
+                rule: HttpRule::Notfound,
+                uri: None,
+                ..
+            }
+        ),
+        "{out:?}"
+    );
+    assert_eq!(r.bans.borrow().len(), 1);
+}
+
+#[test]
+fn log_badpath_alone_would_ban_and_advances_notfound() {
+    let mut r = rig(LOG_BADPATH, "");
+    let out = hit(&mut r, "192.0.2.15", "/.env", 404, 0);
+    assert!(matches!(
+        out,
+        HttpOutcome::WouldBan {
+            rule: HttpRule::Badpath,
+            ..
+        }
+    ));
+    // /.env の分が 1 本として数えられているので、あと 18 本で 19 本目に達する。
+    for i in 1..19 {
+        let out = hit(&mut r, "192.0.2.15", &format!("/x{i}"), 404, i);
+        assert_eq!(out, HttpOutcome::Counted(ip("192.0.2.15")));
+    }
+    let out = hit(&mut r, "192.0.2.15", "/x19", 404, 19);
+    assert!(matches!(
+        out,
+        HttpOutcome::Banned {
+            rule: HttpRule::Notfound,
+            ..
+        }
+    ));
 }
 
 #[test]
@@ -199,12 +248,13 @@ fn ignored_ip_is_not_banned() {
 
 #[test]
 fn log_mode_rule_would_ban_and_leaves_no_trace() {
+    // 200 で返る /.env にして、notfound に数えられないようにする。
     let mut r = rig(
         &format!("{RECIDIVE}[http.badpath]\nmode = \"log\"\n[http.notfound]\nmaxretry = 2\n"),
         "",
     );
     for i in 0..3 {
-        let out = hit(&mut r, "192.0.2.8", "/.env", 404, i * 400);
+        let out = hit(&mut r, "192.0.2.8", "/.env", 200, i * 400);
         assert_eq!(
             out,
             HttpOutcome::WouldBan {

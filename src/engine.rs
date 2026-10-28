@@ -4,7 +4,8 @@ use std::net::IpAddr;
 use std::time::{Duration, SystemTime};
 
 use crate::action::{ActionError, BanAction};
-use crate::config::{Config, ConfigError, RecidiveConfig};
+use crate::ban_step::{BanStep, Recidive, ban_step};
+use crate::config::{Config, ConfigError};
 use crate::filter::{FilterError, SshdFilter};
 use crate::ip::{IgnoreList, canonical_ip};
 use crate::journal::LogEntry;
@@ -47,7 +48,7 @@ pub struct Engine<A: BanAction> {
     tracker: FailTracker,
     bantime: Duration,
     /// 常習犯の設定と、ブロックの回数を数える tracker。無効なら `None`。
-    recidive: Option<(RecidiveConfig, FailTracker)>,
+    recidive: Option<Recidive>,
     /// ブロックの終わる時刻の共有表。`None` なら見ない。
     ledger: Option<SharedLedger>,
     action: A,
@@ -96,37 +97,18 @@ impl<A: BanAction> Engine<A> {
         if !self.tracker.record(ip, entry.time) {
             return Ok(Outcome::Counted(ip));
         }
-        // maxbans 回目のブロックなら長期ブロックにする (記録は tracker 側で消える)。
-        let long = self
-            .recidive
-            .as_ref()
-            .filter(|(_, bans)| bans.would_reach(ip, entry.time))
-            .map(|(recidive, _)| recidive.bantime);
-        let bantime = long.unwrap_or(self.bantime);
-        // 終わりがもっと先のブロックがあれば何もしない。常習犯の回数にも数えない。
-        let mut previous_end = None;
-        if let Some(ledger) = &self.ledger {
-            let mut ledger = ledger.borrow_mut();
-            previous_end = ledger.end_of(ip);
-            if let Err(ends) = ledger.admit(ip, entry.time, bantime) {
-                return Ok(Outcome::AlreadyBanned(ip, ends));
-            }
-        }
-        if let Err(e) = self.action.ban(ip, bantime) {
-            // ブロックが掛からなかったので、表の終わる時刻も元に戻す。
-            if let Some(ledger) = &self.ledger {
-                ledger.borrow_mut().restore(ip, previous_end);
-            }
-            return Err(e);
-        }
-        // 掛かったブロックだけを常習犯の回数に数える。
-        if let Some((_, bans)) = self.recidive.as_mut() {
-            bans.record(ip, entry.time);
-        }
-        Ok(if long.is_some() {
-            Outcome::LongBanned(ip)
-        } else {
-            Outcome::Banned(ip)
+        let step = ban_step(
+            &self.action,
+            self.ledger.as_ref(),
+            self.recidive.as_mut(),
+            ip,
+            entry.time,
+            self.bantime,
+        )?;
+        Ok(match step {
+            BanStep::AlreadyBanned(ends) => Outcome::AlreadyBanned(ip, ends),
+            BanStep::Banned { long: true, .. } => Outcome::LongBanned(ip),
+            BanStep::Banned { long: false, .. } => Outcome::Banned(ip),
         })
     }
 

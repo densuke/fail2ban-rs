@@ -3,6 +3,7 @@
 //! 以降の機能モジュールはここに `pub mod` で追加する。
 
 pub mod action;
+pub mod ban_step;
 pub mod config;
 pub mod duration;
 pub mod engine;
