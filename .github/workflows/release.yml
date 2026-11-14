@@ -21,7 +21,7 @@ jobs:
   guard:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: タグ名と Cargo.toml の version が一致することを検証
         env:
@@ -60,7 +60,7 @@ jobs:
             asset: fail2ban-rs-aarch64-linux-musl
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Rust target
         run: |
